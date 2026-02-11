@@ -1,0 +1,28 @@
+﻿http:
+  addr: ":8080"
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 60s
+  shutdown_timeout: 10s
+mysql:
+  host: "localhost"
+  port: 3306
+  db: "mkk_luna"
+  user: "root"
+  pass: "root"
+  max_open: 10
+  max_idle: 5
+  max_lifetime: 1h
+redis:
+  addr: "localhost:6379"
+  pass: ""
+  db: 0
+  ttl: 5m
+jwt:
+  access_ttl: 24h
+  refresh_ttl: 720h # 30d
+  secret: "qwe123!@#"
+rate_limit:
+  per_minute: 100
+log:
+  level: "info"
