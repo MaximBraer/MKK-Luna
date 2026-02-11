@@ -1,4 +1,4 @@
-﻿DROP INDEX idx_sessions_expires_at ON sessions;
+DROP INDEX idx_sessions_expires_at ON sessions;
 DROP INDEX idx_sessions_user_id ON sessions;
 
 DROP INDEX idx_task_comments_user_id ON task_comments;

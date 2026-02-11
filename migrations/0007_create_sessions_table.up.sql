@@ -1,4 +1,4 @@
-﻿CREATE TABLE sessions (
+CREATE TABLE sessions (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
   token_hash CHAR(64) NOT NULL,

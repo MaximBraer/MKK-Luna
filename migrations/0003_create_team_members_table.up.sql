@@ -1,4 +1,4 @@
-﻿CREATE TABLE team_members (
+CREATE TABLE team_members (
   team_id BIGINT NOT NULL,
   user_id BIGINT NOT NULL,
   role ENUM('owner','admin','member') NOT NULL,

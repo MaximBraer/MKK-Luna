@@ -1,4 +1,4 @@
-﻿CREATE TABLE task_history (
+CREATE TABLE task_history (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   task_id BIGINT NOT NULL,
   changed_by BIGINT NULL,
