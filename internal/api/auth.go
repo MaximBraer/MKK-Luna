@@ -12,15 +12,15 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
-	"MKK-Luna/internal/api/ratelimit"
+	"MKK-Luna/internal/domain/ratelimit"
 	"MKK-Luna/internal/service"
 	"MKK-Luna/pkg/api/response"
 )
 
 type AuthHandler struct {
 	auth           *service.AuthService
-	loginLimiter   *ratelimit.Limiter
-	refreshLimiter *ratelimit.Limiter
+	loginLimiter   ratelimit.Limiter
+	refreshLimiter ratelimit.Limiter
 }
 
 type registerRequest struct {
@@ -48,7 +48,7 @@ type tokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-func NewAuthHandler(auth *service.AuthService, loginLimiter, refreshLimiter *ratelimit.Limiter) *AuthHandler {
+func NewAuthHandler(auth *service.AuthService, loginLimiter, refreshLimiter ratelimit.Limiter) *AuthHandler {
 	return &AuthHandler{auth: auth, loginLimiter: loginLimiter, refreshLimiter: refreshLimiter}
 }
 
@@ -100,7 +100,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 // @Router /api/v1/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if ok, retry := h.loginLimiter.Allow(ip); !ok {
+	if ok, retry := h.loginLimiter.Allow(r.Context(), ip); !ok {
 		setRetryAfter(w, retry)
 		response.Error(w, http.StatusTooManyRequests, "too many requests")
 		return
@@ -156,7 +156,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := intToString(userID)
-	if ok, retry := h.refreshLimiter.Allow(key); !ok {
+	if ok, retry := h.refreshLimiter.Allow(r.Context(), key); !ok {
 		setRetryAfter(w, retry)
 		response.Error(w, http.StatusTooManyRequests, "too many requests")
 		return

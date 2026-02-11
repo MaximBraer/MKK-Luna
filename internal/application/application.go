@@ -7,11 +7,17 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/redis/go-redis/v9"
 
 	"MKK-Luna/internal/api"
 	"MKK-Luna/internal/config"
+	drl "MKK-Luna/internal/domain/ratelimit"
+	"MKK-Luna/internal/infra/cache"
+	rl "MKK-Luna/internal/infra/ratelimit"
+	redisinfra "MKK-Luna/internal/infra/redis"
 	"MKK-Luna/internal/repository"
 	"MKK-Luna/internal/service"
 	"MKK-Luna/pkg/nethttp/runner"
@@ -23,6 +29,10 @@ type Application struct {
 	router *api.Router
 	db     *sqlx.DB
 	auth   *service.AuthService
+	redis  *redis.Client
+	loginLimiter   drl.Limiter
+	refreshLimiter drl.Limiter
+	taskCache      *cache.TaskCache
 
 	errChan chan error
 	wg      sync.WaitGroup
@@ -91,6 +101,10 @@ func (a *Application) initCoreComponents() error {
 		return fmt.Errorf("initDB(): %w", err)
 	}
 
+	if err := a.initRedis(); err != nil {
+		return fmt.Errorf("initRedis(): %w", err)
+	}
+
 	if err := a.initServices(); err != nil {
 		return fmt.Errorf("initServices(): %w", err)
 	}
@@ -119,6 +133,36 @@ func (a *Application) initDB() error {
 	return nil
 }
 
+func (a *Application) initRedis() error {
+	client := redisinfra.New(a.cfg.Redis)
+	ok := client.Ping(context.Background(), a.logger)
+	if ok {
+		a.redis = client.Redis
+	}
+
+	window := time.Duration(a.cfg.RateLimit.WindowSeconds) * time.Second
+	if window <= 0 {
+		window = 60 * time.Second
+	}
+
+	fallbackLogin := rl.NewMemory(a.cfg.Auth.LoginPerMin, window)
+	fallbackRefresh := rl.NewMemory(a.cfg.Auth.RefreshPerMin, window)
+
+	if !a.cfg.RateLimit.Enabled {
+		a.loginLimiter = rl.NewMemory(0, window)
+		a.refreshLimiter = rl.NewMemory(0, window)
+	} else if a.redis != nil {
+		a.loginLimiter = rl.NewRedis(a.redis, a.cfg.Auth.LoginPerMin, window, fallbackLogin, a.logger)
+		a.refreshLimiter = rl.NewRedis(a.redis, a.cfg.Auth.RefreshPerMin, window, fallbackRefresh, a.logger)
+	} else {
+		a.loginLimiter = fallbackLogin
+		a.refreshLimiter = fallbackRefresh
+	}
+
+	a.taskCache = cache.NewTaskCache(a.redis, a.cfg.Cache.TaskCacheTTL, a.cfg.Cache.Enabled, a.logger)
+	return nil
+}
+
 func (a *Application) initServices() error {
 	userRepo := repository.NewUserRepository(a.db)
 	sessionRepo := repository.NewSessionRepository(a.db)
@@ -134,7 +178,7 @@ func (a *Application) initPublicRouter(ctx context.Context) error {
 	if a.auth == nil {
 		return fmt.Errorf("auth service is nil")
 	}
-	a.router = api.New(a.cfg, a.logger, a.auth)
+	a.router = api.New(a.cfg, a.logger, a.auth, a.loginLimiter, a.refreshLimiter)
 
 	port, err := parsePort(a.cfg.HTTP.Addr)
 	if err != nil {

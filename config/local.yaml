@@ -5,7 +5,7 @@ http:
   idle_timeout: 60s
   shutdown_timeout: 10s
 mysql:
-  host: "localhost"
+  host: "mysql"
   port: 3306
   db: "mkk_luna"
   user: "root"
@@ -14,10 +14,9 @@ mysql:
   max_idle: 5
   max_lifetime: 1h
 redis:
-  addr: "localhost:6379"
+  addr: "redis:6379"
   pass: ""
   db: 0
-  ttl: 5m
 jwt:
   access_ttl: 15m
   refresh_ttl: 720h
@@ -28,7 +27,11 @@ auth:
   bcrypt_cost: 12
   login_per_min: 5
   refresh_per_min: 20
-rate_limit:
-  per_minute: 100
+cache:
+  enabled: true
+  task_ttl: 5m
+ratelimit:
+  enabled: true
+  window_seconds: 60
 log:
   level: "info"

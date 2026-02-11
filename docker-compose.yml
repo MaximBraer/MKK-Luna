@@ -33,7 +33,7 @@
     build: .
     container_name: mkk_luna_api
     environment:
-      CONFIG_PATH: /app/config/docker.yaml
+      CONFIG_PATH: /app/config/local.yaml
     ports:
       - "8080:8080"
     depends_on:

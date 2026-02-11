@@ -14,7 +14,8 @@ type Config struct {
 	Redis     RedisConfig     `yaml:"redis"`
 	JWT       JWTConfig       `yaml:"jwt"`
 	Auth      AuthConfig      `yaml:"auth"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Cache     CacheConfig     `yaml:"cache"`
+	RateLimit RateLimitConfig `yaml:"ratelimit"`
 	Log       LogConfig       `yaml:"log"`
 }
 
@@ -41,7 +42,6 @@ type RedisConfig struct {
 	Addr     string        `yaml:"addr" default:"localhost:6379"`
 	Password string        `yaml:"pass" default:""`
 	DB       int           `yaml:"db" default:"0"`
-	TTL      time.Duration `yaml:"ttl" default:"5m"`
 }
 
 type JWTConfig struct {
@@ -53,13 +53,19 @@ type JWTConfig struct {
 }
 
 type RateLimitConfig struct {
-	PerMinute int `yaml:"per_minute" default:"100"`
+	Enabled       bool `yaml:"enabled" default:"true"`
+	WindowSeconds int  `yaml:"window_seconds" default:"60"`
 }
 
 type AuthConfig struct {
 	BcryptCost  int `yaml:"bcrypt_cost" default:"12"`
 	LoginPerMin int `yaml:"login_per_min" default:"5"`
 	RefreshPerMin int `yaml:"refresh_per_min" default:"20"`
+}
+
+type CacheConfig struct {
+	Enabled     bool          `yaml:"enabled" default:"true"`
+	TaskCacheTTL time.Duration `yaml:"task_ttl" default:"5m"`
 }
 
 type LogConfig struct {

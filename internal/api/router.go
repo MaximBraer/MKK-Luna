@@ -3,14 +3,13 @@ package api
 import (
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 
 	middlewarex "MKK-Luna/internal/api/middleware"
-	"MKK-Luna/internal/api/ratelimit"
 	"MKK-Luna/internal/config"
+	"MKK-Luna/internal/domain/ratelimit"
 	"MKK-Luna/internal/service"
 )
 
@@ -22,15 +21,13 @@ type Router struct {
 	auth   *service.AuthService
 }
 
-func New(cfg *config.Config, logger *slog.Logger, auth *service.AuthService) *Router {
+func New(cfg *config.Config, logger *slog.Logger, auth *service.AuthService, loginLimiter, refreshLimiter ratelimit.Limiter) *Router {
 	r := chi.NewRouter()
 
 	r.Use(chiMiddleware.RequestID)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(middlewarex.Logger(logger))
 
-	loginLimiter := ratelimit.New(cfg.Auth.LoginPerMin, time.Minute)
-	refreshLimiter := ratelimit.New(cfg.Auth.RefreshPerMin, time.Minute)
 	authHandler := NewAuthHandler(auth, loginLimiter, refreshLimiter)
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {

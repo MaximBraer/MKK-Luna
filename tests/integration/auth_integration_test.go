@@ -13,7 +13,6 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/mysql"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jmoiron/sqlx"
-	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 
 	"MKK-Luna/internal/config"
@@ -53,7 +52,7 @@ func TestAuthIntegration(t *testing.T) {
 		t.Fatalf("migrations path: %v", err)
 	}
 
-	m, err := migrate.New("file://"+migrationsPath, "mysql://"+dsn)
+	m, err := migrate.New(toFileURL(migrationsPath), "mysql://"+dsn)
 	if err != nil {
 		t.Fatalf("migrate.New: %v", err)
 	}
@@ -122,4 +121,9 @@ func findMigrationsPath() (string, error) {
 		wd = parent
 	}
 	return "", os.ErrNotExist
+}
+
+func toFileURL(path string) string {
+	p := filepath.ToSlash(path)
+	return "file://" + p
 }

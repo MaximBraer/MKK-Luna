@@ -186,7 +186,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent s
 			UserAgent: ua,
 			IP:        ipPtr,
 		}
-		newID, err := s.sessions.CreateWithTx(ctx, tx, newSession)
+		newID, err = s.sessions.CreateWithTx(ctx, tx, newSession)
 		if err != nil {
 			return err
 		}
