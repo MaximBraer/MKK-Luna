@@ -13,6 +13,7 @@ type Config struct {
 	MySQL     MySQLConfig     `yaml:"mysql"`
 	Redis     RedisConfig     `yaml:"redis"`
 	JWT       JWTConfig       `yaml:"jwt"`
+	Auth      AuthConfig      `yaml:"auth"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Log       LogConfig       `yaml:"log"`
 }
@@ -44,13 +45,21 @@ type RedisConfig struct {
 }
 
 type JWTConfig struct {
-	AccessTTL  time.Duration `yaml:"access_ttl" default:"24h"`
+	AccessTTL  time.Duration `yaml:"access_ttl" default:"15m"`
 	RefreshTTL time.Duration `yaml:"refresh_ttl" default:"720h"`
-	Secret     string        `yaml:"secret" default:"change-me"`
+	Secret     string        `yaml:"secret" default:"change-me-please-change-me-please-32"`
+	Issuer     string        `yaml:"issuer" default:"task-service"`
+	ClockSkew  time.Duration `yaml:"clock_skew" default:"60s"`
 }
 
 type RateLimitConfig struct {
 	PerMinute int `yaml:"per_minute" default:"100"`
+}
+
+type AuthConfig struct {
+	BcryptCost  int `yaml:"bcrypt_cost" default:"12"`
+	LoginPerMin int `yaml:"login_per_min" default:"5"`
+	RefreshPerMin int `yaml:"refresh_per_min" default:"20"`
 }
 
 type LogConfig struct {

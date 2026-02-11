@@ -8,8 +8,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jmoiron/sqlx"
+
 	"MKK-Luna/internal/api"
 	"MKK-Luna/internal/config"
+	"MKK-Luna/internal/repository"
+	"MKK-Luna/internal/service"
 	"MKK-Luna/pkg/nethttp/runner"
 )
 
@@ -17,6 +21,8 @@ type Application struct {
 	cfg    *config.Config
 	logger *slog.Logger
 	router *api.Router
+	db     *sqlx.DB
+	auth   *service.AuthService
 
 	errChan chan error
 	wg      sync.WaitGroup
@@ -67,6 +73,10 @@ func (a *Application) Wait(ctx context.Context, cancel context.CancelFunc) error
 	close(a.errChan)
 	errWg.Wait()
 
+	if a.db != nil {
+		_ = a.db.Close()
+	}
+
 	return appErr
 }
 
@@ -76,6 +86,14 @@ func (a *Application) initCoreComponents() error {
 	}
 
 	a.initLogger()
+
+	if err := a.initDB(); err != nil {
+		return fmt.Errorf("initDB(): %w", err)
+	}
+
+	if err := a.initServices(); err != nil {
+		return fmt.Errorf("initServices(): %w", err)
+	}
 	return nil
 }
 
@@ -92,8 +110,31 @@ func (a *Application) initLogger() {
 	a.logger = NewLogger(a.cfg.Log.LevelStr)
 }
 
+func (a *Application) initDB() error {
+	db, err := repository.NewMySQL(a.cfg.MySQL)
+	if err != nil {
+		return err
+	}
+	a.db = db
+	return nil
+}
+
+func (a *Application) initServices() error {
+	userRepo := repository.NewUserRepository(a.db)
+	sessionRepo := repository.NewSessionRepository(a.db)
+	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger)
+	if err != nil {
+		return err
+	}
+	a.auth = authSvc
+	return nil
+}
+
 func (a *Application) initPublicRouter(ctx context.Context) error {
-	a.router = api.New(a.cfg, a.logger)
+	if a.auth == nil {
+		return fmt.Errorf("auth service is nil")
+	}
+	a.router = api.New(a.cfg, a.logger, a.auth)
 
 	port, err := parsePort(a.cfg.HTTP.Addr)
 	if err != nil {

@@ -1,6 +1,4 @@
-﻿version: "3.9"
-
-services:
+﻿services:
   mysql:
     image: mysql:8.0
     container_name: mkk_luna_mysql

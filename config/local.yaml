@@ -1,11 +1,11 @@
-﻿http:
+http:
   addr: ":8080"
   read_timeout: 10s
   write_timeout: 10s
   idle_timeout: 60s
   shutdown_timeout: 10s
 mysql:
-  host: "mysql"
+  host: "localhost"
   port: 3306
   db: "mkk_luna"
   user: "root"
@@ -14,14 +14,20 @@ mysql:
   max_idle: 5
   max_lifetime: 1h
 redis:
-  addr: "redis:6379"
+  addr: "localhost:6379"
   pass: ""
   db: 0
   ttl: 5m
 jwt:
-  access_ttl: 24h
+  access_ttl: 15m
   refresh_ttl: 720h
-  secret: "change-me"
+  secret: "change-me-please-change-me-please-32"
+  issuer: "task-service"
+  clock_skew: 60s
+auth:
+  bcrypt_cost: 12
+  login_per_min: 5
+  refresh_per_min: 20
 rate_limit:
   per_minute: 100
 log:

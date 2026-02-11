@@ -1,4 +1,4 @@
-﻿package runner
+package runner
 
 //go:generate mockgen -destination=runner_mock.go -source=runner.go -package=runner
 
