@@ -38,5 +38,6 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/creasty/defaults v1.8.0
+	github.com/golang-migrate/migrate/v4 v4.17.1
 	gopkg.in/yaml.v3 v3.0.1
 )
