@@ -70,6 +70,7 @@ type SessionStore interface {
 
 type AuthMetrics interface {
 	IncAuthEvent(event string)
+	IncAuthEventReason(event, reason string)
 }
 
 func NewAuthService(users UserStore, sessions SessionStore, cfg config.Config, logger *slog.Logger, metrics AuthMetrics) (*AuthService, error) {
@@ -112,9 +113,17 @@ func (s *AuthService) Login(ctx context.Context, login, password, ip, userAgent 
 	} else {
 		user, err = s.users.GetByUsername(ctx, login)
 	}
-	if err != nil || user == nil {
+	if err != nil {
 		if s.metrics != nil {
 			s.metrics.IncAuthEvent("login_fail")
+			s.metrics.IncAuthEventReason("login_fail", "db_error")
+		}
+		return nil, ErrInvalidCredentials
+	}
+	if user == nil {
+		if s.metrics != nil {
+			s.metrics.IncAuthEvent("login_fail")
+			s.metrics.IncAuthEventReason("login_fail", "user_not_found")
 		}
 		return nil, ErrInvalidCredentials
 	}
@@ -122,6 +131,7 @@ func (s *AuthService) Login(ctx context.Context, login, password, ip, userAgent 
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 		if s.metrics != nil {
 			s.metrics.IncAuthEvent("login_fail")
+			s.metrics.IncAuthEventReason("login_fail", "bad_password")
 		}
 		return nil, ErrInvalidCredentials
 	}
@@ -153,6 +163,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent s
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.IncAuthEvent("refresh_fail")
+			s.metrics.IncAuthEventReason("refresh_fail", "invalid_token")
 		}
 		return nil, ErrInvalidToken
 	}
@@ -161,6 +172,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent s
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.IncAuthEvent("refresh_fail")
+			s.metrics.IncAuthEventReason("refresh_fail", "invalid_subject")
 		}
 		return nil, ErrInvalidToken
 	}
@@ -216,6 +228,14 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent s
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.IncAuthEvent("refresh_fail")
+			switch err {
+			case ErrInvalidToken:
+				s.metrics.IncAuthEventReason("refresh_fail", "invalid_token")
+			case ErrTokenReuse:
+				s.metrics.IncAuthEventReason("refresh_fail", "token_reuse")
+			default:
+				s.metrics.IncAuthEventReason("refresh_fail", "tx_error")
+			}
 		}
 		return nil, err
 	}

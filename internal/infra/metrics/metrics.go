@@ -10,6 +10,7 @@ type Metrics struct {
 	HTTPErrors        *prometheus.CounterVec
 	RedisDegraded     *prometheus.CounterVec
 	AuthEvents        *prometheus.CounterVec
+	AuthEventReasons  *prometheus.CounterVec
 	EmailSendErrors   prometheus.Counter
 	EmailCircuitOpen  prometheus.Counter
 	EmailCircuitState prometheus.Gauge
@@ -62,6 +63,13 @@ func New() *Metrics {
 			},
 			[]string{"event"},
 		),
+		AuthEventReasons: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "auth_event_reasons_total",
+				Help: "Total number of auth event reasons.",
+			},
+			[]string{"event", "reason"},
+		),
 		EmailSendErrors: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "email_send_errors_total",
@@ -89,6 +97,7 @@ func New() *Metrics {
 		m.HTTPErrors,
 		m.RedisDegraded,
 		m.AuthEvents,
+		m.AuthEventReasons,
 		m.EmailSendErrors,
 		m.EmailCircuitOpen,
 		m.EmailCircuitState,
@@ -102,4 +111,11 @@ func (m *Metrics) IncAuthEvent(event string) {
 		return
 	}
 	m.AuthEvents.WithLabelValues(event).Inc()
+}
+
+func (m *Metrics) IncAuthEventReason(event, reason string) {
+	if m == nil {
+		return
+	}
+	m.AuthEventReasons.WithLabelValues(event, reason).Inc()
 }
