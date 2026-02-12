@@ -13,6 +13,7 @@ COPY --from=build /out/api /app/api
 COPY --from=build /out/migrator /app/migrator
 COPY ./config /app/config
 COPY ./migrations /app/migrations
+COPY ./.static /app/.static
 COPY ./docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 EXPOSE 8080

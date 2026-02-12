@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	middlewarex "MKK-Luna/internal/api/middleware"
 	"MKK-Luna/internal/config"
@@ -52,6 +53,9 @@ func New(
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	r.Mount("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(".static"))))
+	r.Get("/swagger/*", httpSwagger.Handler(httpSwagger.URL("/static/swagger/swagger.json")))
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/register", authHandler.Register)
