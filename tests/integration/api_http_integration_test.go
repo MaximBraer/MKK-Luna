@@ -50,14 +50,14 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	comments := repository.NewTaskCommentRepository(db)
 	history := repository.NewTaskHistoryRepository(db)
 
-	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default())
+	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default(), nil)
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
 	}
-	teamSvc := service.NewTeamService(db, teams, members, users)
+	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
-	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute))
+	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), nil)
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
@@ -126,6 +126,115 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	status, body := doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/tasks/"+itoa(taskID)+"/history?limit=20&offset=0", ownerToken, nil)
 	if status != http.StatusOK {
 		t.Fatalf("expected 200 history read, got %d body=%s", status, body)
+	}
+}
+
+func TestInviteEmailFailureReturns503(t *testing.T) {
+	if !integrationEnabled() {
+		t.Skip("set INTEGRATION=1 to run")
+	}
+
+	ctx := context.Background()
+	db := setupMySQLDB(t, ctx)
+	defer db.Close()
+
+	cfg := &config.Config{}
+	cfg.JWT.Secret = "change-me-please-change-me-please-32"
+	cfg.JWT.AccessTTL = 15 * time.Minute
+	cfg.JWT.RefreshTTL = 30 * 24 * time.Hour
+	cfg.JWT.Issuer = "task-service"
+	cfg.JWT.ClockSkew = time.Minute
+	cfg.Auth.BcryptCost = 12
+	cfg.HTTP.Addr = ":8080"
+	cfg.HTTP.ReadTimeout = 10 * time.Second
+	cfg.HTTP.WriteTimeout = 10 * time.Second
+	cfg.HTTP.IdleTimeout = 60 * time.Second
+
+	users := repository.NewUserRepository(db)
+	sessions := repository.NewSessionRepository(db)
+	teams := repository.NewTeamRepository(db)
+	members := repository.NewTeamMemberRepository(db)
+	tasks := repository.NewTaskRepository(db)
+	comments := repository.NewTaskCommentRepository(db)
+	history := repository.NewTaskHistoryRepository(db)
+
+	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default(), nil)
+	if err != nil {
+		t.Fatalf("auth service: %v", err)
+	}
+	teamSvc := service.NewTeamService(db, teams, members, users, emailFailSender{})
+	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
+
+	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), nil)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ownerToken := registerAndLogin(t, srv.URL, "owner-fail@test.com", "ownerfail", "Password123")
+	_ = registerAndLogin(t, srv.URL, "member-fail@test.com", "memberfail", "Password123")
+	teamID := createTeamHTTP(t, srv.URL, ownerToken, "http-team-fail")
+
+	status, _ := doJSONRequest(t, http.MethodPost, srv.URL+"/api/v1/teams/"+itoa(teamID)+"/invite", ownerToken, map[string]any{
+		"email": "member-fail@test.com",
+		"role":  "member",
+	})
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 on email failure, got %d", status)
+	}
+}
+
+func TestGlobalUserRateLimit(t *testing.T) {
+	if !integrationEnabled() {
+		t.Skip("set INTEGRATION=1 to run")
+	}
+
+	ctx := context.Background()
+	db := setupMySQLDB(t, ctx)
+	defer db.Close()
+
+	cfg := &config.Config{}
+	cfg.JWT.Secret = "change-me-please-change-me-please-32"
+	cfg.JWT.AccessTTL = 15 * time.Minute
+	cfg.JWT.RefreshTTL = 30 * 24 * time.Hour
+	cfg.JWT.Issuer = "task-service"
+	cfg.JWT.ClockSkew = time.Minute
+	cfg.Auth.BcryptCost = 12
+	cfg.HTTP.Addr = ":8080"
+	cfg.HTTP.ReadTimeout = 10 * time.Second
+	cfg.HTTP.WriteTimeout = 10 * time.Second
+	cfg.HTTP.IdleTimeout = 60 * time.Second
+	cfg.RateLimit.WindowSeconds = 2
+
+	users := repository.NewUserRepository(db)
+	sessions := repository.NewSessionRepository(db)
+	teams := repository.NewTeamRepository(db)
+	members := repository.NewTeamMemberRepository(db)
+	tasks := repository.NewTaskRepository(db)
+	comments := repository.NewTaskCommentRepository(db)
+	history := repository.NewTaskHistoryRepository(db)
+
+	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default(), nil)
+	if err != nil {
+		t.Fatalf("auth service: %v", err)
+	}
+	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
+	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
+
+	userLimiter := ratelimit.NewMemory(5, 2*time.Second)
+	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), userLimiter, nil)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	token := registerAndLogin(t, srv.URL, "rl-user@test.com", "rluser", "Password123")
+
+	for i := 0; i < 5; i++ {
+		status, _ := doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/teams", token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("expected 200 before limit, got %d", status)
+		}
+	}
+	status, _ := doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/teams", token, nil)
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on limit, got %d", status)
 	}
 }
 

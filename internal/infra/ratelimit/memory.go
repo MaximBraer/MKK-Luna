@@ -38,19 +38,24 @@ func (l *memoryLimiter) Allow(_ context.Context, key string) (allowed bool, retr
 		return true, 0
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
+	reset := fixedWindowReset(now, l.window)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	e, ok := l.entries[key]
 	if !ok || now.After(e.reset) {
-		e = &entry{count: 0, reset: now.Add(l.window)}
+		e = &entry{count: 0, reset: reset}
 		l.entries[key] = e
 	}
 
 	if e.count >= l.limit {
-		return false, time.Until(e.reset)
+		ra := time.Until(e.reset)
+		if ra <= 0 {
+			ra = time.Second
+		}
+		return false, ra
 	}
 
 	e.count++
@@ -70,4 +75,17 @@ func (l *memoryLimiter) startCleanup() {
 		}
 		l.mu.Unlock()
 	}
+}
+
+func fixedWindowReset(now time.Time, window time.Duration) time.Time {
+	if window <= 0 {
+		return now.Add(time.Second)
+	}
+	ws := int64(window.Seconds())
+	if ws <= 0 {
+		return now.Add(time.Second)
+	}
+	epoch := now.Unix() / ws
+	start := time.Unix(epoch*ws, 0).UTC()
+	return start.Add(window)
 }

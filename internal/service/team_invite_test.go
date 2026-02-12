@@ -79,6 +79,14 @@ func (f *fakeUserStore) GetByEmail(ctx context.Context, email string) (*reposito
 	return nil, nil
 }
 
+type fakeEmailSender struct {
+	err error
+}
+
+func (f fakeEmailSender) SendInvite(ctx context.Context, toEmail, teamName string) error {
+	return f.err
+}
+
 func TestTeamService_InviteByEmail_Table(t *testing.T) {
 	baseTeam := &repository.Team{ID: 1, Name: "team"}
 	baseUser := &repository.User{ID: 99, Email: "u@test.com"}
@@ -90,6 +98,7 @@ func TestTeamService_InviteByEmail_Table(t *testing.T) {
 		userFn     func(ctx context.Context, email string) (*repository.User, error)
 		isMemFn    func(ctx context.Context, teamID, userID int64) (bool, error)
 		addFn      func(ctx context.Context, teamID, userID int64, role string) error
+		emailErr   error
 		targetRole string
 		wantErr    error
 	}{
@@ -157,6 +166,17 @@ func TestTeamService_InviteByEmail_Table(t *testing.T) {
 			wantErr:    errors.New("write failed"),
 		},
 		{
+			name:       "email sender error",
+			teamFn:     func(context.Context, int64) (*repository.Team, error) { return baseTeam, nil },
+			roleFn:     func(context.Context, int64, int64) (string, bool, error) { return RoleOwner, true, nil },
+			userFn:     func(context.Context, string) (*repository.User, error) { return baseUser, nil },
+			isMemFn:    func(context.Context, int64, int64) (bool, error) { return false, nil },
+			addFn:      func(context.Context, int64, int64, string) error { return nil },
+			emailErr:   errors.New("email down"),
+			targetRole: RoleMember,
+			wantErr:    ErrUnavailable,
+		},
+		{
 			name:       "success",
 			teamFn:     func(context.Context, int64) (*repository.Team, error) { return baseTeam, nil },
 			roleFn:     func(context.Context, int64, int64) (string, bool, error) { return RoleOwner, true, nil },
@@ -175,6 +195,7 @@ func TestTeamService_InviteByEmail_Table(t *testing.T) {
 				&fakeTeamStore{getByID: tt.teamFn},
 				&fakeTeamMemberStore{getRole: tt.roleFn, isMember: tt.isMemFn, add: tt.addFn},
 				&fakeUserStore{getByEmail: tt.userFn},
+				fakeEmailSender{err: tt.emailErr},
 			)
 			err := svc.InviteByEmail(context.Background(), 1, 1, "u@test.com", tt.targetRole)
 			switch {

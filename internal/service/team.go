@@ -22,6 +22,7 @@ type TeamService struct {
 	teams   teamStore
 	members teamMemberStore
 	users   userStore
+	email   EmailSender
 }
 
 type teamStore interface {
@@ -41,8 +42,12 @@ type userStore interface {
 	GetByEmail(ctx context.Context, email string) (*repository.User, error)
 }
 
-func NewTeamService(db *sqlx.DB, teams teamStore, members teamMemberStore, users userStore) *TeamService {
-	return &TeamService{db: db, teams: teams, members: members, users: users}
+type EmailSender interface {
+	SendInvite(ctx context.Context, toEmail, teamName string) error
+}
+
+func NewTeamService(db *sqlx.DB, teams teamStore, members teamMemberStore, users userStore, emailSender EmailSender) *TeamService {
+	return &TeamService{db: db, teams: teams, members: members, users: users, email: emailSender}
 }
 
 func (s *TeamService) CreateTeam(ctx context.Context, userID int64, name string) (int64, error) {
@@ -119,6 +124,12 @@ func (s *TeamService) InviteByEmail(ctx context.Context, inviterID, teamID int64
 		return err
 	} else if ok {
 		return ErrConflict
+	}
+
+	if s.email != nil {
+		if err := s.email.SendInvite(ctx, email, team.Name); err != nil {
+			return ErrUnavailable
+		}
 	}
 
 	if err := s.members.Add(ctx, teamID, user.ID, role); err != nil {

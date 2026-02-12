@@ -36,6 +36,7 @@ type AuthService struct {
 	sessions SessionStore
 	cfg      config.Config
 	logger   *slog.Logger
+	metrics  AuthMetrics
 }
 
 type TokenPair struct {
@@ -67,7 +68,11 @@ type SessionStore interface {
 	RevokeWithTx(ctx context.Context, tx *sqlx.Tx, tokenHash string, revokedAt time.Time) error
 }
 
-func NewAuthService(users UserStore, sessions SessionStore, cfg config.Config, logger *slog.Logger) (*AuthService, error) {
+type AuthMetrics interface {
+	IncAuthEvent(event string)
+}
+
+func NewAuthService(users UserStore, sessions SessionStore, cfg config.Config, logger *slog.Logger, metrics AuthMetrics) (*AuthService, error) {
 	if len(cfg.JWT.Secret) < 32 {
 		return nil, errors.New("jwt secret must be at least 32 bytes")
 	}
@@ -77,7 +82,7 @@ func NewAuthService(users UserStore, sessions SessionStore, cfg config.Config, l
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &AuthService{users: users, sessions: sessions, cfg: cfg, logger: logger}, nil
+	return &AuthService{users: users, sessions: sessions, cfg: cfg, logger: logger, metrics: metrics}, nil
 }
 
 func (s *AuthService) Register(ctx context.Context, email, username, password string) (int64, error) {
@@ -108,10 +113,16 @@ func (s *AuthService) Login(ctx context.Context, login, password, ip, userAgent 
 		user, err = s.users.GetByUsername(ctx, login)
 	}
 	if err != nil || user == nil {
+		if s.metrics != nil {
+			s.metrics.IncAuthEvent("login_fail")
+		}
 		return nil, ErrInvalidCredentials
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+		if s.metrics != nil {
+			s.metrics.IncAuthEvent("login_fail")
+		}
 		return nil, ErrInvalidCredentials
 	}
 
@@ -130,6 +141,9 @@ func (s *AuthService) Login(ctx context.Context, login, password, ip, userAgent 
 		"ip", ip,
 		"user_agent", userAgent,
 	)
+	if s.metrics != nil {
+		s.metrics.IncAuthEvent("login_success")
+	}
 
 	return pair, nil
 }
@@ -137,11 +151,17 @@ func (s *AuthService) Login(ctx context.Context, login, password, ip, userAgent 
 func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent string) (*TokenPair, error) {
 	claims, err := s.parseToken(refreshToken, TokenTypeRefresh)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.IncAuthEvent("refresh_fail")
+		}
 		return nil, ErrInvalidToken
 	}
 
 	userID, err := strconv.ParseInt(claims.Subject, 10, 64)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.IncAuthEvent("refresh_fail")
+		}
 		return nil, ErrInvalidToken
 	}
 
@@ -194,6 +214,9 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent s
 		return nil
 	})
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.IncAuthEvent("refresh_fail")
+		}
 		return nil, err
 	}
 
@@ -211,6 +234,10 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent s
 		"ip", ip,
 		"user_agent", userAgent,
 	)
+	if s.metrics != nil {
+		s.metrics.IncAuthEvent("refresh_success")
+		s.metrics.IncAuthEvent("revoke")
+	}
 
 	return newPair, nil
 }

@@ -33,5 +33,17 @@ cache:
 ratelimit:
   enabled: true
   window_seconds: 60
+  user_per_min: 100
+metrics:
+  enabled: true
+  addr: ":9090"
+email:
+  base_url: "http://email-mock:8081"
+  timeout: 2s
+circuit_breaker:
+  max_requests: 3
+  interval: 60s
+  timeout: 30s
+  failure_threshold: 5
 log:
   level: "info"

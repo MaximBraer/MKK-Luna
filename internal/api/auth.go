@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -201,7 +202,7 @@ func setRetryAfter(w http.ResponseWriter, d time.Duration) {
 	if d <= 0 {
 		return
 	}
-	secs := int(d.Seconds())
+	secs := int(math.Ceil(d.Seconds()))
 	if secs < 1 {
 		secs = 1
 	}

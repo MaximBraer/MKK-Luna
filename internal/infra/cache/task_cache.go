@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	metricsinfra "MKK-Luna/internal/infra/metrics"
 )
 
 type TaskCache struct {
@@ -19,10 +21,11 @@ type TaskCache struct {
 	ttl     time.Duration
 	enabled bool
 	logger  *slog.Logger
+	metrics *metricsinfra.Metrics
 }
 
-func NewTaskCache(client *redis.Client, ttl time.Duration, enabled bool, logger *slog.Logger) *TaskCache {
-	return &TaskCache{client: client, ttl: ttl, enabled: enabled, logger: logger}
+func NewTaskCache(client *redis.Client, ttl time.Duration, enabled bool, logger *slog.Logger, metrics *metricsinfra.Metrics) *TaskCache {
+	return &TaskCache{client: client, ttl: ttl, enabled: enabled, logger: logger, metrics: metrics}
 }
 
 func (c *TaskCache) GetList(ctx context.Context, teamID int64, filters map[string]string) ([]byte, bool, error) {
@@ -39,6 +42,7 @@ func (c *TaskCache) GetList(ctx context.Context, teamID int64, filters map[strin
 		return nil, false, nil
 	}
 	if err != nil {
+		c.onRedisError(err)
 		return nil, false, err
 	}
 	return val, true, nil
@@ -50,10 +54,15 @@ func (c *TaskCache) SetList(ctx context.Context, teamID int64, filters map[strin
 	}
 	ver, err := c.getVersion(ctx, teamID)
 	if err != nil {
+		c.onRedisError(err)
 		return err
 	}
 	key := cacheKey(teamID, ver, filters)
-	return c.client.Set(ctx, key, data, c.ttl).Err()
+	if err := c.client.Set(ctx, key, data, c.ttl).Err(); err != nil {
+		c.onRedisError(err)
+		return err
+	}
+	return nil
 }
 
 func (c *TaskCache) InvalidateTeam(ctx context.Context, teamID int64) error {
@@ -61,6 +70,9 @@ func (c *TaskCache) InvalidateTeam(ctx context.Context, teamID int64) error {
 		return nil
 	}
 	_, err := c.client.Incr(ctx, versionKey(teamID)).Result()
+	if err != nil {
+		c.onRedisError(err)
+	}
 	return err
 }
 
@@ -71,6 +83,7 @@ func (c *TaskCache) getVersion(ctx context.Context, teamID int64) (int64, error)
 		return 1, nil
 	}
 	if err != nil {
+		c.onRedisError(err)
 		return 0, err
 	}
 	ver, err := parseInt64(val)
@@ -81,6 +94,15 @@ func (c *TaskCache) getVersion(ctx context.Context, teamID int64) (int64, error)
 		return 1, nil
 	}
 	return ver, nil
+}
+
+func (c *TaskCache) onRedisError(err error) {
+	if c.logger != nil {
+		c.logger.Warn("cache redis error", "err", err)
+	}
+	if c.metrics != nil {
+		c.metrics.RedisDegraded.WithLabelValues("cache").Inc()
+	}
 }
 
 func versionKey(teamID int64) string {

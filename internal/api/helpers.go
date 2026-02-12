@@ -31,6 +31,9 @@ func mapServiceError(w http.ResponseWriter, err error) bool {
 	case err == service.ErrBadRequest:
 		response.Error(w, http.StatusBadRequest, "invalid request")
 		return true
+	case err == service.ErrUnavailable:
+		response.Error(w, http.StatusServiceUnavailable, "service unavailable")
+		return true
 	default:
 		response.Error(w, http.StatusInternalServerError, "internal error")
 		return true

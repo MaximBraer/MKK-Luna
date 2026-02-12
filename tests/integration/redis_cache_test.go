@@ -5,9 +5,9 @@ package integration
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
-	"strings"
 
 	"github.com/redis/go-redis/v9"
 	redisTC "github.com/testcontainers/testcontainers-go/modules/redis"
@@ -34,7 +34,7 @@ func TestRedisTaskCache(t *testing.T) {
 	endpoint = strings.TrimPrefix(endpoint, "tcp://")
 
 	client := redis.NewClient(&redis.Options{Addr: endpoint})
-	cache := cacheinfra.NewTaskCache(client, 5*time.Minute, true, nil)
+	cache := cacheinfra.NewTaskCache(client, 5*time.Minute, true, nil, nil)
 
 	if err := client.FlushDB(ctx).Err(); err != nil {
 		t.Fatalf("flushdb: %v", err)

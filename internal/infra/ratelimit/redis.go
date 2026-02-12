@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	metricsinfra "MKK-Luna/internal/infra/metrics"
 )
 
 type redisLimiter struct {
@@ -16,11 +18,12 @@ type redisLimiter struct {
 	window   time.Duration
 	fallback *memoryLimiter
 	logger   *slog.Logger
+	metrics  *metricsinfra.Metrics
 	errCount uint64
 }
 
-func NewRedis(client *redis.Client, limit int, window time.Duration, fallback *memoryLimiter, logger *slog.Logger) *redisLimiter {
-	return &redisLimiter{client: client, limit: limit, window: window, fallback: fallback, logger: logger}
+func NewRedis(client *redis.Client, limit int, window time.Duration, fallback *memoryLimiter, logger *slog.Logger, metrics *metricsinfra.Metrics) *redisLimiter {
+	return &redisLimiter{client: client, limit: limit, window: window, fallback: fallback, logger: logger, metrics: metrics}
 }
 
 func (l *redisLimiter) Allow(ctx context.Context, key string) (bool, time.Duration) {
@@ -47,10 +50,13 @@ func (l *redisLimiter) Allow(ctx context.Context, key string) (bool, time.Durati
 		ttl, err := l.client.TTL(ctx, key).Result()
 		if err != nil {
 			l.onRedisError(err)
-			return false, l.window
+			return false, remainingDuration(l.window, time.Now().UTC())
 		}
 		if ttl <= 0 {
-			return false, l.window
+			if l.logger != nil {
+				l.logger.Warn("redis limiter ttl missing", "key", key, "ttl", ttl)
+			}
+			return false, remainingDuration(l.window, time.Now().UTC())
 		}
 		return false, ceilDuration(ttl)
 	}
@@ -63,6 +69,9 @@ func (l *redisLimiter) onRedisError(err error) {
 	if l.logger != nil {
 		l.logger.Warn("redis limiter error", "err", err)
 	}
+	if l.metrics != nil {
+		l.metrics.RedisDegraded.WithLabelValues("ratelimit").Inc()
+	}
 }
 
 func ceilDuration(d time.Duration) time.Duration {
@@ -71,4 +80,16 @@ func ceilDuration(d time.Duration) time.Duration {
 	}
 	secs := math.Ceil(d.Seconds())
 	return time.Duration(secs) * time.Second
+}
+
+func remainingDuration(window time.Duration, now time.Time) time.Duration {
+	ws := int64(window.Seconds())
+	if ws <= 0 {
+		return time.Second
+	}
+	rem := ws - (now.Unix() % ws)
+	if rem <= 0 {
+		rem = 1
+	}
+	return time.Duration(rem) * time.Second
 }

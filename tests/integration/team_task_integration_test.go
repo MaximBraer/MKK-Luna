@@ -38,7 +38,7 @@ func TestInviteExistingMemberReturnsConflict(t *testing.T) {
 	ownerID, _ := users.Create(ctx, "owner@test.com", "owner", "hash")
 	memberID, _ := users.Create(ctx, "member@test.com", "member", "hash")
 
-	svc := service.NewTeamService(db, teams, members, users)
+	svc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	teamID, err := svc.CreateTeam(ctx, ownerID, "team-a")
 	if err != nil {
 		t.Fatalf("create team: %v", err)
@@ -65,7 +65,7 @@ func TestCreateTeamCreatesOwnerMembership(t *testing.T) {
 	users := repository.NewUserRepository(db)
 	teams := repository.NewTeamRepository(db)
 	members := repository.NewTeamMemberRepository(db)
-	svc := service.NewTeamService(db, teams, members, users)
+	svc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 
 	ownerID, _ := users.Create(ctx, "owner-create@test.com", "ownercreate", "hash")
 	teamID, err := svc.CreateTeam(ctx, ownerID, "team-owner")
@@ -102,7 +102,7 @@ func TestCreateTeamRollbackOnAddOwnerError(t *testing.T) {
 	users := repository.NewUserRepository(db)
 	teams := repository.NewTeamRepository(db)
 	members := repository.NewTeamMemberRepository(db)
-	svc := service.NewTeamService(db, teams, members, users)
+	svc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 
 	_, err := svc.CreateTeam(ctx, 999999, "team-bad-owner")
 	if err == nil {
@@ -130,7 +130,7 @@ func TestCreateTeamRollbackOnCreateTxError(t *testing.T) {
 	users := repository.NewUserRepository(db)
 	teams := repository.NewTeamRepository(db)
 	members := repository.NewTeamMemberRepository(db)
-	svc := service.NewTeamService(db, teams, members, users)
+	svc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 
 	ownerID, _ := users.Create(ctx, "owner-long@test.com", "ownerlong", "hash")
 	longName := strings.Repeat("a", 300)
@@ -160,7 +160,7 @@ func TestMemberTaskPatchRules(t *testing.T) {
 	memberID, _ := users.Create(ctx, "member2@test.com", "member2", "hash")
 	outsiderID, _ := users.Create(ctx, "outsider@test.com", "outsider", "hash")
 
-	teamSvc := service.NewTeamService(db, teams, members, users)
+	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
 	teamID, err := teamSvc.CreateTeam(ctx, ownerID, "team-b")
@@ -212,7 +212,7 @@ func TestInviteRulesAndErrors(t *testing.T) {
 	adminID, _ := users.Create(ctx, "admin3@test.com", "admin3", "hash")
 	randomID, _ := users.Create(ctx, "random3@test.com", "random3", "hash")
 
-	svc := service.NewTeamService(db, teams, members, users)
+	svc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	teamID, err := svc.CreateTeam(ctx, ownerID, "team-c")
 	if err != nil {
 		t.Fatalf("create team: %v", err)
@@ -257,7 +257,7 @@ func TestTaskAndCommentFlows(t *testing.T) {
 	member2ID, _ := users.Create(ctx, "member42@test.com", "member42", "hash")
 	outsiderID, _ := users.Create(ctx, "outsider4@test.com", "outsider4", "hash")
 
-	teamSvc := service.NewTeamService(db, teams, members, users)
+	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
 	teamID, err := teamSvc.CreateTeam(ctx, ownerID, "team-d")
@@ -387,7 +387,7 @@ func TestTaskAndCommentErrorMatrix(t *testing.T) {
 	memberID, _ := users.Create(ctx, "member5@test.com", "member5", "hash")
 	outsiderID, _ := users.Create(ctx, "outsider5@test.com", "outsider5", "hash")
 
-	teamSvc := service.NewTeamService(db, teams, members, users)
+	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
 	teamID, err := teamSvc.CreateTeam(ctx, ownerID, "team-e")

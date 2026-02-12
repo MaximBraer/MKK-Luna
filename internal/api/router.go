@@ -11,6 +11,7 @@ import (
 	"MKK-Luna/internal/config"
 	"MKK-Luna/internal/domain/cache"
 	"MKK-Luna/internal/domain/ratelimit"
+	metricsinfra "MKK-Luna/internal/infra/metrics"
 	"MKK-Luna/internal/service"
 )
 
@@ -30,12 +31,15 @@ func New(
 	tasks *service.TaskService,
 	taskCache cache.TaskCache,
 	loginLimiter, refreshLimiter ratelimit.Limiter,
+	userLimiter ratelimit.Limiter,
+	metrics *metricsinfra.Metrics,
 ) *Router {
 	r := chi.NewRouter()
 
 	r.Use(chiMiddleware.RequestID)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(middlewarex.Logger(logger))
+	r.Use(middlewarex.Metrics(metrics))
 
 	authHandler := NewAuthHandler(auth, loginLimiter, refreshLimiter)
 	teamHandler := NewTeamHandler(teams)
@@ -54,6 +58,7 @@ func New(
 
 		r.Group(func(r chi.Router) {
 			r.Use(middlewarex.AuthMiddleware(auth))
+			r.Use(middlewarex.UserRateLimit(userLimiter, cfg.RateLimit.WindowSeconds, logger))
 
 			r.Post("/teams", teamHandler.Create)
 			r.Get("/teams", teamHandler.List)

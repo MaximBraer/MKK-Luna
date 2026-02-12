@@ -143,7 +143,7 @@ func TestValidatePassword(t *testing.T) {
 
 func TestRegisterValidation(t *testing.T) {
 	cfg := baseConfig()
-	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil)
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil)
 
 	tests := []struct {
 		name     string
@@ -175,7 +175,7 @@ func TestLoginInvalidCredentials(t *testing.T) {
 	cfg := baseConfig()
 	users := &fakeUsers{}
 	sessions := newFakeSessions()
-	auth, _ := NewAuthService(users, sessions, cfg, nil)
+	auth, _ := NewAuthService(users, sessions, cfg, nil, nil)
 
 	cases := []struct {
 		name  string
@@ -201,7 +201,7 @@ func TestRegisterLoginRefresh(t *testing.T) {
 	users := &fakeUsers{}
 	sessions := newFakeSessions()
 
-	auth, err := NewAuthService(users, sessions, cfg, nil)
+	auth, err := NewAuthService(users, sessions, cfg, nil, nil)
 	if err != nil {
 		t.Fatalf("auth init: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestRefreshScenarios(t *testing.T) {
 	cfg := baseConfig()
 	users := &fakeUsers{}
 	sessions := newFakeSessions()
-	auth, _ := NewAuthService(users, sessions, cfg, nil)
+	auth, _ := NewAuthService(users, sessions, cfg, nil, nil)
 
 	pair, err := auth.newTokenPair(1)
 	if err != nil {
@@ -279,7 +279,7 @@ func TestRefreshScenarios(t *testing.T) {
 
 func TestParseAccessTokenScenarios(t *testing.T) {
 	cfg := baseConfig()
-	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil)
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil)
 
 	cases := []struct {
 		name     string

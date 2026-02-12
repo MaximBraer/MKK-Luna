@@ -5,9 +5,9 @@ package integration
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
-	"strings"
 
 	"github.com/redis/go-redis/v9"
 	redisTC "github.com/testcontainers/testcontainers-go/modules/redis"
@@ -34,7 +34,7 @@ func TestRedisRateLimit(t *testing.T) {
 	endpoint = strings.TrimPrefix(endpoint, "tcp://")
 
 	client := redis.NewClient(&redis.Options{Addr: endpoint})
-	lim := ratelimitinfra.NewRedis(client, 2, time.Minute, ratelimitinfra.NewMemory(2, time.Minute), nil)
+	lim := ratelimitinfra.NewRedis(client, 2, time.Minute, ratelimitinfra.NewMemory(2, time.Minute), nil, nil)
 
 	key := "rl:login:ip:1.2.3.4"
 	if ok, _ := lim.Allow(ctx, key); !ok {

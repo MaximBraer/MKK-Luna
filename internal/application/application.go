@@ -5,17 +5,21 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 
 	"MKK-Luna/internal/api"
 	"MKK-Luna/internal/config"
 	drl "MKK-Luna/internal/domain/ratelimit"
 	"MKK-Luna/internal/infra/cache"
+	emailinfra "MKK-Luna/internal/infra/email"
+	metricsinfra "MKK-Luna/internal/infra/metrics"
 	rl "MKK-Luna/internal/infra/ratelimit"
 	redisinfra "MKK-Luna/internal/infra/redis"
 	"MKK-Luna/internal/repository"
@@ -34,7 +38,10 @@ type Application struct {
 	redis          *redis.Client
 	loginLimiter   drl.Limiter
 	refreshLimiter drl.Limiter
+	userLimiter    drl.Limiter
 	taskCache      *cache.TaskCache
+	metrics        *metricsinfra.Metrics
+	metricsServer  *http.Server
 
 	errChan chan error
 	wg      sync.WaitGroup
@@ -58,7 +65,11 @@ func (a *Application) Start(ctx context.Context, build string) error {
 		return fmt.Errorf("initPublicRouter(): %w", err)
 	}
 
-	a.logger.Info("application started", slog.String("build", build))
+	if err := a.initMetricsServer(ctx); err != nil {
+		return fmt.Errorf("initMetricsServer(): %w", err)
+	}
+
+	a.logger.Info("application started", slog.String("env", build))
 	a.ready = true
 	return nil
 }
@@ -87,6 +98,9 @@ func (a *Application) Wait(ctx context.Context, cancel context.CancelFunc) error
 
 	if a.db != nil {
 		_ = a.db.Close()
+	}
+	if a.redis != nil {
+		_ = a.redis.Close()
 	}
 
 	return appErr
@@ -124,6 +138,9 @@ func (a *Application) initConfig() error {
 
 func (a *Application) initLogger() {
 	a.logger = NewLogger(a.cfg.Log.LevelStr)
+	if a.cfg.Metrics.Enabled {
+		a.metrics = metricsinfra.New()
+	}
 }
 
 func (a *Application) initDB() error {
@@ -149,19 +166,23 @@ func (a *Application) initRedis() error {
 
 	fallbackLogin := rl.NewMemory(a.cfg.Auth.LoginPerMin, window)
 	fallbackRefresh := rl.NewMemory(a.cfg.Auth.RefreshPerMin, window)
+	fallbackUser := rl.NewMemory(a.cfg.RateLimit.UserPerMin, window)
 
 	if !a.cfg.RateLimit.Enabled {
 		a.loginLimiter = rl.NewMemory(0, window)
 		a.refreshLimiter = rl.NewMemory(0, window)
+		a.userLimiter = rl.NewMemory(0, window)
 	} else if a.redis != nil {
-		a.loginLimiter = rl.NewRedis(a.redis, a.cfg.Auth.LoginPerMin, window, fallbackLogin, a.logger)
-		a.refreshLimiter = rl.NewRedis(a.redis, a.cfg.Auth.RefreshPerMin, window, fallbackRefresh, a.logger)
+		a.loginLimiter = rl.NewRedis(a.redis, a.cfg.Auth.LoginPerMin, window, fallbackLogin, a.logger, a.metrics)
+		a.refreshLimiter = rl.NewRedis(a.redis, a.cfg.Auth.RefreshPerMin, window, fallbackRefresh, a.logger, a.metrics)
+		a.userLimiter = rl.NewRedis(a.redis, a.cfg.RateLimit.UserPerMin, window, fallbackUser, a.logger, a.metrics)
 	} else {
 		a.loginLimiter = fallbackLogin
 		a.refreshLimiter = fallbackRefresh
+		a.userLimiter = fallbackUser
 	}
 
-	a.taskCache = cache.NewTaskCache(a.redis, a.cfg.Cache.TaskCacheTTL, a.cfg.Cache.Enabled, a.logger)
+	a.taskCache = cache.NewTaskCache(a.redis, a.cfg.Cache.TaskCacheTTL, a.cfg.Cache.Enabled, a.logger, a.metrics)
 	return nil
 }
 
@@ -174,12 +195,18 @@ func (a *Application) initServices() error {
 	historyRepo := repository.NewTaskHistoryRepository(a.db)
 
 	sessionRepo := repository.NewSessionRepository(a.db)
-	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger)
+	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger, a.metrics)
 	if err != nil {
 		return err
 	}
 	a.auth = authSvc
-	a.teamSvc = service.NewTeamService(a.db, teamRepo, memberRepo, userRepo)
+	emailSender := emailinfra.NewBreakerSender(
+		emailinfra.NewHTTPSender(a.cfg.Email),
+		a.cfg.Circuit,
+		a.logger,
+		a.metrics,
+	)
+	a.teamSvc = service.NewTeamService(a.db, teamRepo, memberRepo, userRepo, emailSender)
 	a.taskSvc = service.NewTaskService(a.db, taskRepo, teamRepo, memberRepo, commentRepo, historyRepo)
 	return nil
 }
@@ -191,14 +218,14 @@ func (a *Application) initPublicRouter(ctx context.Context) error {
 	if a.teamSvc == nil || a.taskSvc == nil {
 		return fmt.Errorf("services are nil")
 	}
-	a.router = api.New(a.cfg, a.logger, a.auth, a.teamSvc, a.taskSvc, a.taskCache, a.loginLimiter, a.refreshLimiter)
+	a.router = api.New(a.cfg, a.logger, a.auth, a.teamSvc, a.taskSvc, a.taskCache, a.loginLimiter, a.refreshLimiter, a.userLimiter, a.metrics)
 
 	port, err := parsePort(a.cfg.HTTP.Addr)
 	if err != nil {
 		return err
 	}
 
-	if err := runner.RunServer(ctx, a.router.Server, port, a.errChan, &a.wg); err != nil {
+	if err := runner.RunServer(ctx, a.router.Server, port, a.errChan, &a.wg, a.cfg.HTTP.ShutdownTimeout); err != nil {
 		return err
 	}
 
@@ -214,4 +241,26 @@ func parsePort(addr string) (string, error) {
 		return "", fmt.Errorf("invalid http addr: %w", err)
 	}
 	return port, nil
+}
+
+func (a *Application) initMetricsServer(ctx context.Context) error {
+	if !a.cfg.Metrics.Enabled || a.metrics == nil {
+		return nil
+	}
+
+	a.metricsServer = &http.Server{
+		Addr:              a.cfg.Metrics.Addr,
+		Handler:           promhttp.HandlerFor(a.metrics.Registry, promhttp.HandlerOpts{}),
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+
+	port, err := parsePort(a.cfg.Metrics.Addr)
+	if err != nil {
+		return err
+	}
+
+	return runner.RunServer(ctx, a.metricsServer, port, a.errChan, &a.wg, a.cfg.HTTP.ShutdownTimeout)
 }

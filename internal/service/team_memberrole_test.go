@@ -53,6 +53,7 @@ func TestTeamService_EnsureMemberRole(t *testing.T) {
 				&fakeTeamStore{getByID: tt.teamFn},
 				&fakeTeamMemberStore{getRole: tt.roleFn},
 				&fakeUserStore{},
+				nil,
 			)
 			got, err := svc.EnsureMemberRole(context.Background(), 1, 1)
 			switch {
