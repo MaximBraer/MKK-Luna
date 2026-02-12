@@ -154,13 +154,14 @@ func TestMemberTaskPatchRules(t *testing.T) {
 	members := repository.NewTeamMemberRepository(db)
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
+	history := repository.NewTaskHistoryRepository(db)
 
 	ownerID, _ := users.Create(ctx, "owner2@test.com", "owner2", "hash")
 	memberID, _ := users.Create(ctx, "member2@test.com", "member2", "hash")
 	outsiderID, _ := users.Create(ctx, "outsider@test.com", "outsider", "hash")
 
 	teamSvc := service.NewTeamService(db, teams, members, users)
-	taskSvc := service.NewTaskService(tasks, teams, members, comments)
+	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
 	teamID, err := teamSvc.CreateTeam(ctx, ownerID, "team-b")
 	if err != nil {
@@ -248,6 +249,7 @@ func TestTaskAndCommentFlows(t *testing.T) {
 	members := repository.NewTeamMemberRepository(db)
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
+	history := repository.NewTaskHistoryRepository(db)
 
 	ownerID, _ := users.Create(ctx, "owner4@test.com", "owner4", "hash")
 	adminID, _ := users.Create(ctx, "admin4@test.com", "admin4", "hash")
@@ -256,7 +258,7 @@ func TestTaskAndCommentFlows(t *testing.T) {
 	outsiderID, _ := users.Create(ctx, "outsider4@test.com", "outsider4", "hash")
 
 	teamSvc := service.NewTeamService(db, teams, members, users)
-	taskSvc := service.NewTaskService(tasks, teams, members, comments)
+	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
 	teamID, err := teamSvc.CreateTeam(ctx, ownerID, "team-d")
 	if err != nil {
@@ -314,6 +316,14 @@ func TestTaskAndCommentFlows(t *testing.T) {
 		t.Fatalf("member should assign in-team user: %v", err)
 	}
 
+	historyRows, total, err := taskSvc.GetTaskHistory(ctx, ownerID, taskID, 20, 0)
+	if err != nil {
+		t.Fatalf("get task history: %v", err)
+	}
+	if total < 2 || len(historyRows) < 2 {
+		t.Fatalf("expected at least two history rows after patch, total=%d len=%d", total, len(historyRows))
+	}
+
 	if _, err := taskSvc.DeleteTask(ctx, memberID, taskID); err != service.ErrForbidden {
 		t.Fatalf("member delete must be forbidden, got %v", err)
 	}
@@ -335,6 +345,15 @@ func TestTaskAndCommentFlows(t *testing.T) {
 	if _, err := taskSvc.DeleteTask(ctx, ownerID, taskID); err != nil {
 		t.Fatalf("owner delete task failed: %v", err)
 	}
+
+	var deletedRows int
+	if err := db.GetContext(ctx, &deletedRows, `SELECT COUNT(*) FROM task_history WHERE task_id = ? AND field_name = 'task_deleted'`, taskID); err != nil {
+		t.Fatalf("count deleted history rows: %v", err)
+	}
+	if deletedRows != 1 {
+		t.Fatalf("expected exactly one task_deleted row, got %d", deletedRows)
+	}
+
 	if _, err := taskSvc.GetTask(ctx, ownerID, taskID); err != service.ErrNotFound {
 		t.Fatalf("expected task not found after delete, got %v", err)
 	}
@@ -362,13 +381,14 @@ func TestTaskAndCommentErrorMatrix(t *testing.T) {
 	members := repository.NewTeamMemberRepository(db)
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
+	history := repository.NewTaskHistoryRepository(db)
 
 	ownerID, _ := users.Create(ctx, "owner5@test.com", "owner5", "hash")
 	memberID, _ := users.Create(ctx, "member5@test.com", "member5", "hash")
 	outsiderID, _ := users.Create(ctx, "outsider5@test.com", "outsider5", "hash")
 
 	teamSvc := service.NewTeamService(db, teams, members, users)
-	taskSvc := service.NewTaskService(tasks, teams, members, comments)
+	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
 	teamID, err := teamSvc.CreateTeam(ctx, ownerID, "team-e")
 	if err != nil {

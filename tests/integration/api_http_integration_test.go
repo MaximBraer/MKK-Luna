@@ -48,13 +48,14 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	members := repository.NewTeamMemberRepository(db)
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
+	history := repository.NewTaskHistoryRepository(db)
 
 	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default())
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
 	}
 	teamSvc := service.NewTeamService(db, teams, members, users)
-	taskSvc := service.NewTaskService(tasks, teams, members, comments)
+	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
 
 	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute))
 	srv := httptest.NewServer(router)
@@ -95,6 +96,36 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	status, _ = doJSONRequest(t, http.MethodPatch, srv.URL+"/api/v1/comments/"+itoa(commentID), outsiderToken, map[string]any{"body": "hack"})
 	if status != http.StatusForbidden {
 		t.Fatalf("expected 403 outsider comment patch, got %d", status)
+	}
+
+	// create one history entry
+	status, _ = doJSONRequest(t, http.MethodPatch, srv.URL+"/api/v1/tasks/"+itoa(taskID), ownerToken, map[string]any{"status": "done"})
+	if status != http.StatusOK {
+		t.Fatalf("expected 200 on patch for history, got %d", status)
+	}
+
+	// 400: invalid limit
+	status, _ = doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/tasks/"+itoa(taskID)+"/history?limit=101", ownerToken, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400 invalid history limit, got %d", status)
+	}
+
+	// 404: history task not found
+	status, _ = doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/tasks/999999/history", ownerToken, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404 history task not found, got %d", status)
+	}
+
+	// 403: outsider history access
+	status, _ = doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/tasks/"+itoa(taskID)+"/history", outsiderToken, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403 history for outsider, got %d", status)
+	}
+
+	// 200: history read
+	status, body := doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/tasks/"+itoa(taskID)+"/history?limit=20&offset=0", ownerToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200 history read, got %d body=%s", status, body)
 	}
 }
 

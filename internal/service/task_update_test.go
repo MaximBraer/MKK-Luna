@@ -5,17 +5,32 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/jmoiron/sqlx"
+
 	"MKK-Luna/internal/repository"
 )
 
 type fakeTaskRepo struct {
-	getByID func(ctx context.Context, taskID int64) (*repository.Task, error)
-	update  func(ctx context.Context, taskID int64, fields map[string]any) error
+	getByID          func(ctx context.Context, taskID int64) (*repository.Task, error)
+	getByIDForUpdate func(ctx context.Context, tx *sqlx.Tx, taskID int64) (*repository.Task, error)
+	update           func(ctx context.Context, taskID int64, fields map[string]any) error
+	updateTx         func(ctx context.Context, tx *sqlx.Tx, taskID int64, fields map[string]any) error
+	deleteFn         func(ctx context.Context, taskID int64) error
+	deleteTx         func(ctx context.Context, tx *sqlx.Tx, taskID int64) error
 }
 
 func (f *fakeTaskRepo) Create(context.Context, repository.Task) (int64, error) { return 0, nil }
 func (f *fakeTaskRepo) GetByID(ctx context.Context, taskID int64) (*repository.Task, error) {
 	return f.getByID(ctx, taskID)
+}
+func (f *fakeTaskRepo) GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, taskID int64) (*repository.Task, error) {
+	if f.getByIDForUpdate != nil {
+		return f.getByIDForUpdate(ctx, tx, taskID)
+	}
+	if f.getByID != nil {
+		return f.getByID(ctx, taskID)
+	}
+	return nil, nil
 }
 func (f *fakeTaskRepo) List(context.Context, repository.TaskListFilter) ([]repository.Task, int64, error) {
 	return nil, 0, nil
@@ -26,7 +41,30 @@ func (f *fakeTaskRepo) Update(ctx context.Context, taskID int64, fields map[stri
 	}
 	return nil
 }
-func (f *fakeTaskRepo) Delete(context.Context, int64) error { return nil }
+func (f *fakeTaskRepo) UpdateTx(ctx context.Context, tx *sqlx.Tx, taskID int64, fields map[string]any) error {
+	if f.updateTx != nil {
+		return f.updateTx(ctx, tx, taskID, fields)
+	}
+	if f.update != nil {
+		return f.update(ctx, taskID, fields)
+	}
+	return nil
+}
+func (f *fakeTaskRepo) Delete(ctx context.Context, taskID int64) error {
+	if f.deleteFn != nil {
+		return f.deleteFn(ctx, taskID)
+	}
+	return nil
+}
+func (f *fakeTaskRepo) DeleteTx(ctx context.Context, tx *sqlx.Tx, taskID int64) error {
+	if f.deleteTx != nil {
+		return f.deleteTx(ctx, tx, taskID)
+	}
+	if f.deleteFn != nil {
+		return f.deleteFn(ctx, taskID)
+	}
+	return nil
+}
 
 type fakeMemberRepo struct {
 	role     string
@@ -73,6 +111,25 @@ func (f *fakeCommentRepo) GetByID(context.Context, int64) (*repository.TaskComme
 func (f *fakeCommentRepo) Update(context.Context, int64, string) error { return nil }
 func (f *fakeCommentRepo) Delete(context.Context, int64) error         { return nil }
 
+type fakeHistoryRepo struct {
+	createBatchTx func(ctx context.Context, tx *sqlx.Tx, entries []repository.TaskHistoryCreate) error
+	listByTask    func(ctx context.Context, taskID int64, limit, offset int) ([]repository.TaskHistory, int64, error)
+}
+
+func (f *fakeHistoryRepo) CreateBatchTx(ctx context.Context, tx *sqlx.Tx, entries []repository.TaskHistoryCreate) error {
+	if f.createBatchTx != nil {
+		return f.createBatchTx(ctx, tx, entries)
+	}
+	return nil
+}
+
+func (f *fakeHistoryRepo) ListByTask(ctx context.Context, taskID int64, limit, offset int) ([]repository.TaskHistory, int64, error) {
+	if f.listByTask != nil {
+		return f.listByTask(ctx, taskID, limit, offset)
+	}
+	return nil, 0, nil
+}
+
 func TestTaskService_UpdateTask_Table(t *testing.T) {
 	baseTask := &repository.Task{ID: 1, TeamID: 10}
 
@@ -114,7 +171,7 @@ func TestTaskService_UpdateTask_Table(t *testing.T) {
 				},
 			}
 			members := &fakeMemberRepo{role: tt.role, hasRole: tt.hasRole, isMember: tt.isMember}
-			svc := NewTaskService(taskRepo, &fakeTeamRepo{}, members, &fakeCommentRepo{})
+			svc := NewTaskService(nil, taskRepo, &fakeTeamRepo{}, members, &fakeCommentRepo{}, &fakeHistoryRepo{})
 
 			_, err := svc.UpdateTask(context.Background(), 1, 1, tt.raw)
 			if err != tt.wantErr {
@@ -129,22 +186,71 @@ func TestTaskService_UpdateTask_Table(t *testing.T) {
 
 func TestTaskService_UpdateTask_ErrorsBeforeValidation(t *testing.T) {
 	svc := NewTaskService(
+		nil,
 		&fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, nil }},
 		&fakeTeamRepo{},
 		&fakeMemberRepo{},
 		&fakeCommentRepo{},
+		&fakeHistoryRepo{},
 	)
 	if _, err := svc.UpdateTask(context.Background(), 1, 1, map[string]json.RawMessage{"status": json.RawMessage(`"done"`)}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
 	svc = NewTaskService(
+		nil,
 		&fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }},
 		&fakeTeamRepo{},
 		&fakeMemberRepo{hasRole: false},
 		&fakeCommentRepo{},
+		&fakeHistoryRepo{},
 	)
 	if _, err := svc.UpdateTask(context.Background(), 1, 1, map[string]json.RawMessage{"status": json.RawMessage(`"done"`)}); err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestTaskService_GetTaskHistory(t *testing.T) {
+	svc := NewTaskService(
+		nil,
+		&fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, nil }},
+		&fakeTeamRepo{},
+		&fakeMemberRepo{},
+		&fakeCommentRepo{},
+		&fakeHistoryRepo{},
+	)
+	if _, _, err := svc.GetTaskHistory(context.Background(), 1, 1, 20, 0); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+
+	svc = NewTaskService(
+		nil,
+		&fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }},
+		&fakeTeamRepo{},
+		&fakeMemberRepo{isMember: func(context.Context, int64, int64) (bool, error) { return false, nil }},
+		&fakeCommentRepo{},
+		&fakeHistoryRepo{},
+	)
+	if _, _, err := svc.GetTaskHistory(context.Background(), 1, 1, 20, 0); err != ErrForbidden {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+
+	items := []repository.TaskHistory{{ID: 1, TaskID: 1, FieldName: "status"}}
+	svc = NewTaskService(
+		nil,
+		&fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }},
+		&fakeTeamRepo{},
+		&fakeMemberRepo{isMember: func(context.Context, int64, int64) (bool, error) { return true, nil }},
+		&fakeCommentRepo{},
+		&fakeHistoryRepo{listByTask: func(context.Context, int64, int, int) ([]repository.TaskHistory, int64, error) {
+			return items, 1, nil
+		}},
+	)
+	got, total, err := svc.GetTaskHistory(context.Background(), 1, 1, 20, 0)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if total != 1 || len(got) != 1 {
+		t.Fatalf("unexpected history: total=%d len=%d", total, len(got))
 	}
 }

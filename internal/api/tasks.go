@@ -58,6 +58,23 @@ type listTasksResponse struct {
 	Offset int            `json:"offset"`
 }
 
+type taskHistoryItemResponse struct {
+	ID        int64  `json:"id"`
+	TaskID    int64  `json:"task_id"`
+	ChangedBy *int64 `json:"changed_by,omitempty"`
+	FieldName string `json:"field_name"`
+	OldValue  any    `json:"old_value,omitempty"`
+	NewValue  any    `json:"new_value,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
+
+type listTaskHistoryResponse struct {
+	Items  []taskHistoryItemResponse `json:"items"`
+	Total  int64                     `json:"total"`
+	Limit  int                       `json:"limit"`
+	Offset int                       `json:"offset"`
+}
+
 // Create godoc
 // @Summary Create task
 // @Tags tasks
@@ -360,6 +377,66 @@ func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
+// History godoc
+// @Summary Get task history
+// @Tags tasks
+// @Produce json
+// @Param id path int true "Task ID"
+// @Param limit query int false "Limit (1..100)"
+// @Param offset query int false "Offset (>=0)"
+// @Success 200 {object} listTaskHistoryResponse
+// @Failure 400 {object} response.ErrorResponse
+// @Failure 401 {object} response.ErrorResponse
+// @Failure 403 {object} response.ErrorResponse
+// @Failure 404 {object} response.ErrorResponse
+// @Router /api/v1/tasks/{id}/history [get]
+func (h *TaskHandler) History(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	userID, ok := middleware.UserIDFromContext(ctx)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	taskID, err := parseInt64(chi.URLParam(r, "id"))
+	if err != nil || taskID <= 0 {
+		response.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	limit, err := parseStrictPositiveInt(r.URL.Query().Get("limit"), 20, 100)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	offset, err := parseStrictNonNegativeInt(r.URL.Query().Get("offset"), 0)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	items, total, err := h.tasks.GetTaskHistory(ctx, userID, taskID, limit, offset)
+	if err != nil {
+		if mapServiceError(w, err) {
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := listTaskHistoryResponse{
+		Items:  make([]taskHistoryItemResponse, 0, len(items)),
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	}
+	for _, item := range items {
+		resp.Items = append(resp.Items, toTaskHistoryResponse(item))
+	}
+	response.JSON(w, http.StatusOK, resp)
+}
+
 func parseQueryInt(v string, def int) int {
 	if v == "" {
 		return def
@@ -369,6 +446,28 @@ func parseQueryInt(v string, def int) int {
 		return def
 	}
 	return n
+}
+
+func parseStrictPositiveInt(v string, def, max int) (int, error) {
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 || n > max {
+		return 0, strconv.ErrSyntax
+	}
+	return n, nil
+}
+
+func parseStrictNonNegativeInt(v string, def int) (int, error) {
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return n, nil
 }
 
 func toTaskResponse(t repository.Task) taskResponse {
@@ -401,5 +500,31 @@ func toTaskResponse(t repository.Task) taskResponse {
 		DueDate:     due,
 		CreatedAt:   t.CreatedAt.Format(time.RFC3339Nano),
 		UpdatedAt:   t.UpdatedAt.Format(time.RFC3339Nano),
+	}
+}
+
+func toTaskHistoryResponse(h repository.TaskHistory) taskHistoryItemResponse {
+	var changedBy *int64
+	if h.ChangedBy.Valid {
+		changedBy = &h.ChangedBy.Int64
+	}
+
+	var oldValue any
+	if len(h.OldValue) > 0 {
+		_ = json.Unmarshal(h.OldValue, &oldValue)
+	}
+	var newValue any
+	if len(h.NewValue) > 0 {
+		_ = json.Unmarshal(h.NewValue, &newValue)
+	}
+
+	return taskHistoryItemResponse{
+		ID:        h.ID,
+		TaskID:    h.TaskID,
+		ChangedBy: changedBy,
+		FieldName: h.FieldName,
+		OldValue:  oldValue,
+		NewValue:  newValue,
+		CreatedAt: h.CreatedAt.Format(time.RFC3339Nano),
 	}
 }

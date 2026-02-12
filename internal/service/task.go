@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmoiron/sqlx"
+
 	"MKK-Luna/internal/repository"
 )
 
@@ -16,18 +18,23 @@ var (
 )
 
 type TaskService struct {
+	db       *sqlx.DB
 	tasks    taskRepo
 	teams    teamRepo
 	members  teamMemberRepo
 	comments taskCommentRepo
+	history  taskHistoryRepo
 }
 
 type taskRepo interface {
 	Create(ctx context.Context, t repository.Task) (int64, error)
 	GetByID(ctx context.Context, taskID int64) (*repository.Task, error)
+	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, taskID int64) (*repository.Task, error)
 	List(ctx context.Context, f repository.TaskListFilter) ([]repository.Task, int64, error)
 	Update(ctx context.Context, taskID int64, fields map[string]any) error
+	UpdateTx(ctx context.Context, tx *sqlx.Tx, taskID int64, fields map[string]any) error
 	Delete(ctx context.Context, taskID int64) error
+	DeleteTx(ctx context.Context, tx *sqlx.Tx, taskID int64) error
 }
 
 type teamRepo interface {
@@ -47,12 +54,19 @@ type taskCommentRepo interface {
 	Delete(ctx context.Context, commentID int64) error
 }
 
-func NewTaskService(tasks taskRepo, teams teamRepo, members teamMemberRepo, comments taskCommentRepo) *TaskService {
+type taskHistoryRepo interface {
+	CreateBatchTx(ctx context.Context, tx *sqlx.Tx, entries []repository.TaskHistoryCreate) error
+	ListByTask(ctx context.Context, taskID int64, limit, offset int) ([]repository.TaskHistory, int64, error)
+}
+
+func NewTaskService(db *sqlx.DB, tasks taskRepo, teams teamRepo, members teamMemberRepo, comments taskCommentRepo, history taskHistoryRepo) *TaskService {
 	return &TaskService{
+		db:       db,
 		tasks:    tasks,
 		teams:    teams,
 		members:  members,
 		comments: comments,
+		history:  history,
 	}
 }
 
@@ -180,6 +194,68 @@ func (s *TaskService) ListTasks(ctx context.Context, userID int64, in TaskListIn
 }
 
 func (s *TaskService) UpdateTask(ctx context.Context, userID, taskID int64, raw map[string]json.RawMessage) (int64, error) {
+	if s.db == nil || s.history == nil {
+		return s.updateTaskNoTx(ctx, userID, taskID, raw)
+	}
+
+	tx, err := s.db.BeginTxx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	task, err := s.tasks.GetByIDForUpdateTx(ctx, tx, taskID)
+	if err != nil {
+		return 0, err
+	}
+	if task == nil {
+		return 0, ErrNotFound
+	}
+
+	role, ok, err := s.members.GetRole(ctx, task.TeamID, userID)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, ErrForbidden
+	}
+
+	parsed, err := s.parseTaskPatch(ctx, task.TeamID, raw)
+	if err != nil {
+		return 0, err
+	}
+
+	allowed := allowedTaskFields(role)
+	for key := range parsed {
+		if !allowed[key] {
+			return 0, ErrForbidden
+		}
+	}
+
+	updates, entries := buildTaskDiffEntries(*task, userID, parsed)
+	if len(updates) == 0 {
+		return task.TeamID, nil
+	}
+
+	if err := s.tasks.UpdateTx(ctx, tx, taskID, updates); err != nil {
+		return 0, err
+	}
+	if err := s.history.CreateBatchTx(ctx, tx, entries); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	committed = true
+	return task.TeamID, nil
+}
+
+func (s *TaskService) updateTaskNoTx(ctx context.Context, userID, taskID int64, raw map[string]json.RawMessage) (int64, error) {
 	task, err := s.tasks.GetByID(ctx, taskID)
 	if err != nil {
 		return 0, err
@@ -195,91 +271,87 @@ func (s *TaskService) UpdateTask(ctx context.Context, userID, taskID int64, raw 
 		return 0, ErrForbidden
 	}
 
+	parsed, err := s.parseTaskPatch(ctx, task.TeamID, raw)
+	if err != nil {
+		return 0, err
+	}
 	allowed := allowedTaskFields(role)
-	for key := range raw {
-		if !isKnownTaskField(key) {
-			return 0, ErrBadRequest
-		}
+	for key := range parsed {
 		if !allowed[key] {
 			return 0, ErrForbidden
 		}
 	}
 
-	fields := make(map[string]any)
-	for key, val := range raw {
-		switch key {
-		case "title":
-			var v string
-			if err := json.Unmarshal(val, &v); err != nil || strings.TrimSpace(v) == "" {
-				return 0, ErrBadRequest
-			}
-			fields["title"] = v
-		case "description":
-			var v *string
-			if err := json.Unmarshal(val, &v); err != nil {
-				return 0, ErrBadRequest
-			}
-			if v == nil {
-				fields["description"] = nil
-			} else {
-				fields["description"] = *v
-			}
-		case "status":
-			var v string
-			if err := json.Unmarshal(val, &v); err != nil || !isValidStatus(v) {
-				return 0, ErrBadRequest
-			}
-			fields["status"] = v
-		case "priority":
-			var v string
-			if err := json.Unmarshal(val, &v); err != nil || !isValidPriority(v) {
-				return 0, ErrBadRequest
-			}
-			fields["priority"] = v
-		case "assignee_id":
-			var v *int64
-			if err := json.Unmarshal(val, &v); err != nil {
-				return 0, ErrBadRequest
-			}
-			if v == nil {
-				fields["assignee_id"] = nil
-			} else {
-				ok, err := s.members.IsMember(ctx, task.TeamID, *v)
-				if err != nil {
-					return 0, err
-				}
-				if !ok {
-					return 0, ErrBadRequest
-				}
-				fields["assignee_id"] = *v
-			}
-		case "due_date":
-			var v *string
-			if err := json.Unmarshal(val, &v); err != nil {
-				return 0, ErrBadRequest
-			}
-			if v == nil {
-				fields["due_date"] = nil
-			} else {
-				tm, err := time.Parse("2006-01-02", *v)
-				if err != nil {
-					return 0, ErrBadRequest
-				}
-				fields["due_date"] = tm
-			}
-		}
+	updates, _ := buildTaskDiffEntries(*task, userID, parsed)
+	if len(updates) == 0 {
+		return task.TeamID, nil
 	}
-
-	if len(fields) == 0 {
-		return 0, ErrBadRequest
-	}
-	if err := s.tasks.Update(ctx, taskID, fields); err != nil {
+	if err := s.tasks.Update(ctx, taskID, updates); err != nil {
 		return 0, err
 	}
 	return task.TeamID, nil
 }
 
 func (s *TaskService) DeleteTask(ctx context.Context, userID, taskID int64) (int64, error) {
+	if s.db == nil || s.history == nil {
+		return s.deleteTaskNoTx(ctx, userID, taskID)
+	}
+
+	tx, err := s.db.BeginTxx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	task, err := s.tasks.GetByIDForUpdateTx(ctx, tx, taskID)
+	if err != nil {
+		return 0, err
+	}
+	if task == nil {
+		return 0, ErrNotFound
+	}
+
+	role, ok, err := s.members.GetRole(ctx, task.TeamID, userID)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, ErrForbidden
+	}
+	if role != RoleOwner && role != RoleAdmin {
+		return 0, ErrForbidden
+	}
+
+	snapshot, err := taskDeleteSnapshot(*task)
+	if err != nil {
+		return 0, err
+	}
+	entry := repository.TaskHistoryCreate{
+		TaskID:    task.ID,
+		ChangedBy: &userID,
+		FieldName: "task_deleted",
+		OldValue:  snapshot,
+		NewValue:  nil,
+	}
+	if err := s.history.CreateBatchTx(ctx, tx, []repository.TaskHistoryCreate{entry}); err != nil {
+		return 0, err
+	}
+	if err := s.tasks.DeleteTx(ctx, tx, taskID); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	committed = true
+	return task.TeamID, nil
+}
+
+func (s *TaskService) deleteTaskNoTx(ctx context.Context, userID, taskID int64) (int64, error) {
 	task, err := s.tasks.GetByID(ctx, taskID)
 	if err != nil {
 		return 0, err
@@ -389,6 +461,231 @@ func (s *TaskService) DeleteComment(ctx context.Context, userID, commentID int64
 		return ErrForbidden
 	}
 	return s.comments.Delete(ctx, commentID)
+}
+
+func (s *TaskService) GetTaskHistory(ctx context.Context, userID, taskID int64, limit, offset int) ([]repository.TaskHistory, int64, error) {
+	if s.history == nil {
+		return nil, 0, ErrBadRequest
+	}
+	task, err := s.tasks.GetByID(ctx, taskID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if task == nil {
+		return nil, 0, ErrNotFound
+	}
+	if ok, err := s.members.IsMember(ctx, task.TeamID, userID); err != nil {
+		return nil, 0, err
+	} else if !ok {
+		return nil, 0, ErrForbidden
+	}
+	return s.history.ListByTask(ctx, taskID, limit, offset)
+}
+
+func (s *TaskService) parseTaskPatch(ctx context.Context, teamID int64, raw map[string]json.RawMessage) (map[string]any, error) {
+	parsed := make(map[string]any, len(raw))
+	for key, val := range raw {
+		if !isKnownTaskField(key) {
+			return nil, ErrBadRequest
+		}
+
+		switch key {
+		case "title":
+			var v string
+			if err := json.Unmarshal(val, &v); err != nil || strings.TrimSpace(v) == "" {
+				return nil, ErrBadRequest
+			}
+			parsed[key] = v
+		case "description":
+			var v *string
+			if err := json.Unmarshal(val, &v); err != nil {
+				return nil, ErrBadRequest
+			}
+			parsed[key] = v
+		case "status":
+			var v string
+			if err := json.Unmarshal(val, &v); err != nil || !isValidStatus(v) {
+				return nil, ErrBadRequest
+			}
+			parsed[key] = v
+		case "priority":
+			var v string
+			if err := json.Unmarshal(val, &v); err != nil || !isValidPriority(v) {
+				return nil, ErrBadRequest
+			}
+			parsed[key] = v
+		case "assignee_id":
+			var v *int64
+			if err := json.Unmarshal(val, &v); err != nil {
+				return nil, ErrBadRequest
+			}
+			if v != nil {
+				ok, err := s.members.IsMember(ctx, teamID, *v)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					return nil, ErrBadRequest
+				}
+			}
+			parsed[key] = v
+		case "due_date":
+			var v *string
+			if err := json.Unmarshal(val, &v); err != nil {
+				return nil, ErrBadRequest
+			}
+			if v == nil {
+				parsed[key] = (*time.Time)(nil)
+				continue
+			}
+			tm, err := time.Parse("2006-01-02", *v)
+			if err != nil {
+				return nil, ErrBadRequest
+			}
+			parsed[key] = &tm
+		}
+	}
+	if len(parsed) == 0 {
+		return nil, ErrBadRequest
+	}
+	return parsed, nil
+}
+
+func buildTaskDiffEntries(task repository.Task, userID int64, parsed map[string]any) (map[string]any, []repository.TaskHistoryCreate) {
+	updates := make(map[string]any)
+	entries := make([]repository.TaskHistoryCreate, 0, len(parsed))
+
+	for key, val := range parsed {
+		switch key {
+		case "title":
+			newValue := val.(string)
+			if task.Title == newValue {
+				continue
+			}
+			updates[key] = newValue
+			entries = append(entries, taskHistoryEntry(task.ID, userID, key, task.Title, newValue))
+		case "description":
+			var oldValue any
+			if task.Description.Valid {
+				oldValue = task.Description.String
+			}
+			newPtr := val.(*string)
+			if newPtr == nil {
+				if !task.Description.Valid {
+					continue
+				}
+				updates[key] = nil
+				entries = append(entries, taskHistoryEntry(task.ID, userID, key, oldValue, nil))
+				continue
+			}
+			if task.Description.Valid && task.Description.String == *newPtr {
+				continue
+			}
+			updates[key] = *newPtr
+			entries = append(entries, taskHistoryEntry(task.ID, userID, key, oldValue, *newPtr))
+		case "status":
+			newValue := val.(string)
+			if task.Status == newValue {
+				continue
+			}
+			updates[key] = newValue
+			entries = append(entries, taskHistoryEntry(task.ID, userID, key, task.Status, newValue))
+		case "priority":
+			newValue := val.(string)
+			if task.Priority == newValue {
+				continue
+			}
+			updates[key] = newValue
+			entries = append(entries, taskHistoryEntry(task.ID, userID, key, task.Priority, newValue))
+		case "assignee_id":
+			var oldValue any
+			if task.AssigneeID.Valid {
+				oldValue = task.AssigneeID.Int64
+			}
+			newPtr := val.(*int64)
+			if newPtr == nil {
+				if !task.AssigneeID.Valid {
+					continue
+				}
+				updates[key] = nil
+				entries = append(entries, taskHistoryEntry(task.ID, userID, key, oldValue, nil))
+				continue
+			}
+			if task.AssigneeID.Valid && task.AssigneeID.Int64 == *newPtr {
+				continue
+			}
+			updates[key] = *newPtr
+			entries = append(entries, taskHistoryEntry(task.ID, userID, key, oldValue, *newPtr))
+		case "due_date":
+			var oldValue any
+			if task.DueDate.Valid {
+				oldValue = task.DueDate.Time.Format("2006-01-02")
+			}
+			newPtr := val.(*time.Time)
+			if newPtr == nil {
+				if !task.DueDate.Valid {
+					continue
+				}
+				updates[key] = nil
+				entries = append(entries, taskHistoryEntry(task.ID, userID, key, oldValue, nil))
+				continue
+			}
+			newDate := newPtr.Format("2006-01-02")
+			if task.DueDate.Valid && task.DueDate.Time.Format("2006-01-02") == newDate {
+				continue
+			}
+			updates[key] = *newPtr
+			entries = append(entries, taskHistoryEntry(task.ID, userID, key, oldValue, newDate))
+		}
+	}
+
+	return updates, entries
+}
+
+func taskHistoryEntry(taskID, userID int64, field string, oldValue, newValue any) repository.TaskHistoryCreate {
+	oldJSON := mustJSON(oldValue)
+	newJSON := mustJSON(newValue)
+	return repository.TaskHistoryCreate{
+		TaskID:    taskID,
+		ChangedBy: &userID,
+		FieldName: field,
+		OldValue:  oldJSON,
+		NewValue:  newJSON,
+	}
+}
+
+func taskDeleteSnapshot(task repository.Task) (*json.RawMessage, error) {
+	payload := map[string]any{
+		"id":          task.ID,
+		"title":       task.Title,
+		"description": nil,
+		"status":      task.Status,
+		"assignee_id": nil,
+		"priority":    task.Priority,
+		"due_date":    nil,
+	}
+	if task.Description.Valid {
+		payload["description"] = task.Description.String
+	}
+	if task.AssigneeID.Valid {
+		payload["assignee_id"] = task.AssigneeID.Int64
+	}
+	if task.DueDate.Valid {
+		payload["due_date"] = task.DueDate.Time.Format("2006-01-02")
+	}
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	raw := json.RawMessage(b)
+	return &raw, nil
+}
+
+func mustJSON(v any) *json.RawMessage {
+	b, _ := json.Marshal(v)
+	raw := json.RawMessage(b)
+	return &raw
 }
 
 func isKnownTaskField(field string) bool {

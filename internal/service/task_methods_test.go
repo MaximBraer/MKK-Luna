@@ -98,11 +98,12 @@ func TestTaskService_CreateTask_Table(t *testing.T) {
 			if tt.memFn != nil {
 				members = &fakeMemberRepo{isMember: tt.memFn}
 			}
-			svc := NewTaskService(
+			svc := NewTaskService(nil,
 				&taskRepoWithCreate{},
 				&fakeTeamRepo{getByID: tt.teamFn},
 				members,
 				&commentRepoFns{},
+				&fakeHistoryRepo{},
 			)
 			_, err := svc.CreateTask(context.Background(), 1, tt.input)
 			if err != tt.wantErr {
@@ -114,7 +115,7 @@ func TestTaskService_CreateTask_Table(t *testing.T) {
 
 func TestTaskService_CreateTask_DefaultsApplied(t *testing.T) {
 	var got repository.Task
-	svc := NewTaskService(
+	svc := NewTaskService(nil,
 		&taskRepoWithCreate{
 			createFn: func(_ context.Context, t repository.Task) (int64, error) {
 				got = t
@@ -124,6 +125,7 @@ func TestTaskService_CreateTask_DefaultsApplied(t *testing.T) {
 		&fakeTeamRepo{getByID: func(context.Context, int64) (*repository.Team, error) { return &repository.Team{ID: 1}, nil }},
 		&fakeMemberRepo{isMember: func(context.Context, int64, int64) (bool, error) { return true, nil }},
 		&commentRepoFns{},
+		&fakeHistoryRepo{},
 	)
 
 	_, err := svc.CreateTask(context.Background(), 11, CreateTaskInput{TeamID: 1, Title: "x"})
@@ -139,7 +141,7 @@ func TestTaskService_CreateTask_DefaultsApplied(t *testing.T) {
 }
 
 func TestTaskService_GetListDelete(t *testing.T) {
-	svc := NewTaskService(
+	svc := NewTaskService(nil,
 		&taskRepoWithCreate{
 			fakeTaskRepo: fakeTaskRepo{
 				getByID: func(context.Context, int64) (*repository.Task, error) {
@@ -160,6 +162,7 @@ func TestTaskService_GetListDelete(t *testing.T) {
 			},
 		},
 		&commentRepoFns{},
+		&fakeHistoryRepo{},
 	)
 
 	if _, err := svc.GetTask(context.Background(), 1, 999); err != nil {
@@ -199,7 +202,7 @@ func TestTaskService_Comments(t *testing.T) {
 		deleteFn: func(context.Context, int64) error { return nil },
 	}
 
-	svc := NewTaskService(
+	svc := NewTaskService(nil,
 		taskRepo,
 		&fakeTeamRepo{getByID: func(context.Context, int64) (*repository.Team, error) { return &repository.Team{ID: 10}, nil }},
 		&fakeMemberRepo{
@@ -210,6 +213,7 @@ func TestTaskService_Comments(t *testing.T) {
 			},
 		},
 		comments,
+		&fakeHistoryRepo{},
 	)
 
 	if _, err := svc.CreateComment(context.Background(), 2, 1, "x"); err != nil {
@@ -228,11 +232,12 @@ func TestTaskService_Comments(t *testing.T) {
 
 func TestTaskService_ListComments_Errors(t *testing.T) {
 	t.Run("task repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, errMock("task") }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{},
 			&commentRepoFns{},
+			&fakeHistoryRepo{},
 		)
 		if _, err := svc.ListComments(context.Background(), 1, 1); err == nil || err.Error() != "task" {
 			t.Fatalf("expected task error, got %v", err)
@@ -240,11 +245,12 @@ func TestTaskService_ListComments_Errors(t *testing.T) {
 	})
 
 	t.Run("membership repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{isMember: func(context.Context, int64, int64) (bool, error) { return false, errMock("member") }},
 			&commentRepoFns{},
+			&fakeHistoryRepo{},
 		)
 		if _, err := svc.ListComments(context.Background(), 1, 1); err == nil || err.Error() != "member" {
 			t.Fatalf("expected member error, got %v", err)
@@ -252,11 +258,12 @@ func TestTaskService_ListComments_Errors(t *testing.T) {
 	})
 
 	t.Run("comment list repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{isMember: func(context.Context, int64, int64) (bool, error) { return true, nil }},
 			&commentRepoFns{listFn: func(context.Context, int64) ([]repository.TaskComment, error) { return nil, errMock("list") }},
+			&fakeHistoryRepo{},
 		)
 		if _, err := svc.ListComments(context.Background(), 1, 1); err == nil || err.Error() != "list" {
 			t.Fatalf("expected list error, got %v", err)
@@ -265,13 +272,14 @@ func TestTaskService_ListComments_Errors(t *testing.T) {
 }
 
 func TestTaskService_CommentAndDeleteErrors(t *testing.T) {
-	svc := NewTaskService(
+	svc := NewTaskService(nil,
 		&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, nil }}},
 		&fakeTeamRepo{},
 		&fakeMemberRepo{},
 		&commentRepoFns{
 			getFn: func(context.Context, int64) (*repository.TaskComment, error) { return nil, nil },
 		},
+		&fakeHistoryRepo{},
 	)
 	if _, err := svc.CreateComment(context.Background(), 1, 1, "x"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound create comment, got %v", err)
@@ -289,11 +297,12 @@ func TestTaskService_CommentAndDeleteErrors(t *testing.T) {
 
 func TestTaskService_DeleteForbiddenAndNotFound(t *testing.T) {
 	t.Run("task not found", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{},
 			&commentRepoFns{},
+			&fakeHistoryRepo{},
 		)
 		if _, err := svc.DeleteTask(context.Background(), 1, 1); err != ErrNotFound {
 			t.Fatalf("expected ErrNotFound got %v", err)
@@ -301,11 +310,12 @@ func TestTaskService_DeleteForbiddenAndNotFound(t *testing.T) {
 	})
 
 	t.Run("no role", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{hasRole: false},
 			&commentRepoFns{},
+			&fakeHistoryRepo{},
 		)
 		if _, err := svc.DeleteTask(context.Background(), 1, 1); err != ErrForbidden {
 			t.Fatalf("expected ErrForbidden got %v", err)
@@ -313,11 +323,12 @@ func TestTaskService_DeleteForbiddenAndNotFound(t *testing.T) {
 	})
 
 	t.Run("member role forbidden", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{role: RoleMember, hasRole: true},
 			&commentRepoFns{},
+			&fakeHistoryRepo{},
 		)
 		if _, err := svc.DeleteTask(context.Background(), 1, 1); err != ErrForbidden {
 			t.Fatalf("expected ErrForbidden got %v", err)
@@ -326,11 +337,12 @@ func TestTaskService_DeleteForbiddenAndNotFound(t *testing.T) {
 }
 
 func TestTaskService_GetTaskForbidden(t *testing.T) {
-	svc := NewTaskService(
+	svc := NewTaskService(nil,
 		&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 		&fakeTeamRepo{},
 		&fakeMemberRepo{isMember: func(context.Context, int64, int64) (bool, error) { return false, nil }},
 		&commentRepoFns{},
+		&fakeHistoryRepo{},
 	)
 	if _, err := svc.GetTask(context.Background(), 1, 1); err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden got %v", err)
@@ -338,21 +350,23 @@ func TestTaskService_GetTaskForbidden(t *testing.T) {
 }
 
 func TestTaskService_ListTaskErrors(t *testing.T) {
-	svc := NewTaskService(
+	svc := NewTaskService(nil,
 		&taskRepoWithCreate{},
 		&fakeTeamRepo{getByID: func(context.Context, int64) (*repository.Team, error) { return nil, nil }},
 		&fakeMemberRepo{},
 		&commentRepoFns{},
+		&fakeHistoryRepo{},
 	)
 	if _, _, err := svc.ListTasks(context.Background(), 1, TaskListInput{TeamID: 1, Limit: 10, Offset: 0}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound got %v", err)
 	}
 
-	svc = NewTaskService(
+	svc = NewTaskService(nil,
 		&taskRepoWithCreate{},
 		&fakeTeamRepo{getByID: func(context.Context, int64) (*repository.Team, error) { return &repository.Team{ID: 1}, nil }},
 		&fakeMemberRepo{isMember: func(context.Context, int64, int64) (bool, error) { return false, nil }},
 		&commentRepoFns{},
+		&fakeHistoryRepo{},
 	)
 	if _, _, err := svc.ListTasks(context.Background(), 1, TaskListInput{TeamID: 1, Limit: 10, Offset: 0}); err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden got %v", err)
@@ -366,21 +380,23 @@ func TestTaskService_CommentForbiddenCases(t *testing.T) {
 			return &repository.TaskComment{ID: 1, TaskID: 1, UserID: 9}, nil
 		},
 	}
-	svc := NewTaskService(
+	svc := NewTaskService(nil,
 		taskRepo,
 		&fakeTeamRepo{},
 		&fakeMemberRepo{role: RoleMember, hasRole: true, isMember: func(context.Context, int64, int64) (bool, error) { return false, nil }},
 		comments,
+		&fakeHistoryRepo{},
 	)
 	if _, err := svc.CreateComment(context.Background(), 1, 1, "x"); err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden create comment got %v", err)
 	}
 
-	svc = NewTaskService(
+	svc = NewTaskService(nil,
 		taskRepo,
 		&fakeTeamRepo{},
 		&fakeMemberRepo{role: RoleMember, hasRole: true, isMember: func(context.Context, int64, int64) (bool, error) { return true, nil }},
 		comments,
+		&fakeHistoryRepo{},
 	)
 	if err := svc.UpdateComment(context.Background(), 1, 1, "x"); err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden update comment got %v", err)
@@ -398,11 +414,12 @@ func (e errMock) Error() string { return string(e) }
 
 func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 	t.Run("comment repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{},
 			&commentRepoFns{getFn: func(context.Context, int64) (*repository.TaskComment, error) { return nil, errMock("cget") }},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.UpdateComment(context.Background(), 1, 1, "x"); err == nil || err.Error() != "cget" {
 			t.Fatalf("expected cget error, got %v", err)
@@ -410,13 +427,14 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("task repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, errMock("tget") }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{},
 			&commentRepoFns{getFn: func(context.Context, int64) (*repository.TaskComment, error) {
 				return &repository.TaskComment{ID: 1, TaskID: 1, UserID: 1}, nil
 			}},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.UpdateComment(context.Background(), 1, 1, "x"); err == nil || err.Error() != "tget" {
 			t.Fatalf("expected tget error, got %v", err)
@@ -424,7 +442,7 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("role repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{
@@ -433,6 +451,7 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 			&commentRepoFns{getFn: func(context.Context, int64) (*repository.TaskComment, error) {
 				return &repository.TaskComment{ID: 1, TaskID: 1, UserID: 1}, nil
 			}},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.UpdateComment(context.Background(), 1, 1, "x"); err == nil || err.Error() != "role" {
 			t.Fatalf("expected role error, got %v", err)
@@ -440,7 +459,7 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("not member", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{
@@ -449,6 +468,7 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 			&commentRepoFns{getFn: func(context.Context, int64) (*repository.TaskComment, error) {
 				return &repository.TaskComment{ID: 1, TaskID: 1, UserID: 1}, nil
 			}},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.UpdateComment(context.Background(), 1, 1, "x"); err != ErrForbidden {
 			t.Fatalf("expected ErrForbidden, got %v", err)
@@ -456,7 +476,7 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("update repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{
@@ -468,6 +488,7 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 				},
 				updateFn: func(context.Context, int64, string) error { return errMock("upd") },
 			},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.UpdateComment(context.Background(), 1, 1, "x"); err == nil || err.Error() != "upd" {
 			t.Fatalf("expected upd error, got %v", err)
@@ -477,11 +498,12 @@ func TestTaskService_UpdateComment_ErrorBranches(t *testing.T) {
 
 func TestTaskService_DeleteComment_ErrorBranches(t *testing.T) {
 	t.Run("comment repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{},
 			&commentRepoFns{getFn: func(context.Context, int64) (*repository.TaskComment, error) { return nil, errMock("cget") }},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.DeleteComment(context.Background(), 1, 1); err == nil || err.Error() != "cget" {
 			t.Fatalf("expected cget error, got %v", err)
@@ -489,7 +511,7 @@ func TestTaskService_DeleteComment_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("delete repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{
@@ -501,6 +523,7 @@ func TestTaskService_DeleteComment_ErrorBranches(t *testing.T) {
 				},
 				deleteFn: func(context.Context, int64) error { return errMock("del") },
 			},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.DeleteComment(context.Background(), 1, 1); err == nil || err.Error() != "del" {
 			t.Fatalf("expected del error, got %v", err)
@@ -508,7 +531,7 @@ func TestTaskService_DeleteComment_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("task not found for comment task_id", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{},
@@ -517,6 +540,7 @@ func TestTaskService_DeleteComment_ErrorBranches(t *testing.T) {
 					return &repository.TaskComment{ID: 1, TaskID: 777, UserID: 2}, nil
 				},
 			},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.DeleteComment(context.Background(), 1, 1); err != ErrNotFound {
 			t.Fatalf("expected ErrNotFound, got %v", err)
@@ -524,7 +548,7 @@ func TestTaskService_DeleteComment_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("role repo error", func(t *testing.T) {
-		svc := NewTaskService(
+		svc := NewTaskService(nil,
 			&taskRepoWithCreate{fakeTaskRepo: fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }}},
 			&fakeTeamRepo{},
 			&fakeMemberRepo{
@@ -535,6 +559,7 @@ func TestTaskService_DeleteComment_ErrorBranches(t *testing.T) {
 					return &repository.TaskComment{ID: 1, TaskID: 1, UserID: 2}, nil
 				},
 			},
+			&fakeHistoryRepo{},
 		)
 		if err := svc.DeleteComment(context.Background(), 1, 1); err == nil || err.Error() != "role-del" {
 			t.Fatalf("expected role-del error, got %v", err)

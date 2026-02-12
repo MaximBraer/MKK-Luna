@@ -62,6 +62,7 @@ func New(
 			r.Post("/tasks", taskHandler.Create)
 			r.Get("/tasks", taskHandler.List)
 			r.Get("/tasks/{id}", taskHandler.Get)
+			r.Get("/tasks/{id}/history", taskHandler.History)
 			r.Patch("/tasks/{id}", taskHandler.Update)
 			r.Delete("/tasks/{id}", taskHandler.Delete)
 

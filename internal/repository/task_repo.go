@@ -58,6 +58,21 @@ func (r *TaskRepository) GetByID(ctx context.Context, taskID int64) (*Task, erro
 	return &t, nil
 }
 
+func (r *TaskRepository) GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, taskID int64) (*Task, error) {
+	var t Task
+	err := tx.GetContext(ctx, &t, `
+		SELECT id, team_id, title, description, status, priority, assignee_id, created_by, due_date, created_at, updated_at
+		FROM tasks WHERE id = ? FOR UPDATE
+	`, taskID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
 type TaskListFilter struct {
 	TeamID     int64
 	Status     *string
@@ -116,8 +131,29 @@ func (r *TaskRepository) Update(ctx context.Context, taskID int64, fields map[st
 	return err
 }
 
+func (r *TaskRepository) UpdateTx(ctx context.Context, tx *sqlx.Tx, taskID int64, fields map[string]any) error {
+	if len(fields) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+	cols := make([]string, 0, len(fields))
+	args := make([]any, 0, len(fields)+1)
+	for k, v := range fields {
+		cols = append(cols, k+" = ?")
+		args = append(args, v)
+	}
+	query := "UPDATE tasks SET " + strings.Join(cols, ", ") + " WHERE id = ?"
+	args = append(args, taskID)
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
 func (r *TaskRepository) Delete(ctx context.Context, taskID int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, taskID)
+	return err
+}
+
+func (r *TaskRepository) DeleteTx(ctx context.Context, tx *sqlx.Tx, taskID int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, taskID)
 	return err
 }
 

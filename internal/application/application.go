@@ -171,6 +171,7 @@ func (a *Application) initServices() error {
 	memberRepo := repository.NewTeamMemberRepository(a.db)
 	taskRepo := repository.NewTaskRepository(a.db)
 	commentRepo := repository.NewTaskCommentRepository(a.db)
+	historyRepo := repository.NewTaskHistoryRepository(a.db)
 
 	sessionRepo := repository.NewSessionRepository(a.db)
 	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger)
@@ -179,7 +180,7 @@ func (a *Application) initServices() error {
 	}
 	a.auth = authSvc
 	a.teamSvc = service.NewTeamService(a.db, teamRepo, memberRepo, userRepo)
-	a.taskSvc = service.NewTaskService(taskRepo, teamRepo, memberRepo, commentRepo)
+	a.taskSvc = service.NewTaskService(a.db, taskRepo, teamRepo, memberRepo, commentRepo, historyRepo)
 	return nil
 }
 
