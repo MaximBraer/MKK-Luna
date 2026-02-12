@@ -34,6 +34,12 @@ LEFT JOIN (
       AND updated_at < ?
     GROUP BY team_id
 ) d ON d.team_id = t.id
+WHERE t.id IN (
+  SELECT team_id
+  FROM team_members
+  WHERE user_id = ?
+    AND role IN ('owner','admin')
+)
 `
 
 const explainTopCreatorsSQL = `
@@ -55,6 +61,12 @@ FROM (
       FROM tasks
       WHERE created_at >= ?
         AND created_at < ?
+        AND team_id IN (
+          SELECT team_id
+          FROM team_members
+          WHERE user_id = ?
+            AND role IN ('owner','admin')
+        )
       GROUP BY team_id, created_by
   ) base
 ) ranked
@@ -106,7 +118,7 @@ func TestAnalyticsDoneStatsCounts(t *testing.T) {
 	insertTaskWithTimes(t, ctx, db, teamID2, "done-team2", "done", "medium", inRange, inRange, nil)
 
 	analytics := repository.NewAnalyticsRepository(db)
-	stats, err := analytics.GetTeamDoneStats(ctx, from, to)
+	stats, err := analytics.GetTeamDoneStats(ctx, u1, from, to)
 	if err != nil {
 		t.Fatalf("GetTeamDoneStats: %v", err)
 	}
@@ -119,8 +131,8 @@ func TestAnalyticsDoneStatsCounts(t *testing.T) {
 	if s := got[teamID1]; s.MembersCount != 2 || s.DoneCount != 2 {
 		t.Fatalf("team1 expected members=2 done=2, got members=%d done=%d", s.MembersCount, s.DoneCount)
 	}
-	if s := got[teamID2]; s.MembersCount != 1 || s.DoneCount != 1 {
-		t.Fatalf("team2 expected members=1 done=1, got members=%d done=%d", s.MembersCount, s.DoneCount)
+	if _, ok := got[teamID2]; ok {
+		t.Fatalf("team2 should not be visible for user %d", u1)
 	}
 }
 
@@ -149,7 +161,7 @@ func TestAnalyticsDoneStatsEmptyWindow(t *testing.T) {
 	insertTaskWithTimes(t, ctx, db, teamID, "done-out", "done", "medium", now, now, &u1)
 
 	analytics := repository.NewAnalyticsRepository(db)
-	stats, err := analytics.GetTeamDoneStats(ctx, from, to)
+	stats, err := analytics.GetTeamDoneStats(ctx, u1, from, to)
 	if err != nil {
 		t.Fatalf("GetTeamDoneStats: %v", err)
 	}
@@ -186,6 +198,10 @@ func TestAnalyticsTopCreatorsRanking(t *testing.T) {
 	teamID1 := insertTeam(t, ctx, db, "team-a", u1)
 	teamID2 := insertTeam(t, ctx, db, "team-b", u2)
 
+	memberRepo := repository.NewTeamMemberRepository(db)
+	_ = memberRepo.Add(ctx, teamID1, u1, "owner")
+	_ = memberRepo.Add(ctx, teamID2, u2, "owner")
+
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	inRange := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -202,7 +218,7 @@ func TestAnalyticsTopCreatorsRanking(t *testing.T) {
 	insertTaskWithTimes(t, ctx, db, teamID2, "t2-u2-1", "todo", "medium", inRange, inRange, &u2)
 
 	analytics := repository.NewAnalyticsRepository(db)
-	rows, err := analytics.GetTopCreatorsByTeam(ctx, from, to, 3)
+	rows, err := analytics.GetTopCreatorsByTeam(ctx, u1, from, to, 3)
 	if err != nil {
 		t.Fatalf("GetTopCreatorsByTeam: %v", err)
 	}
@@ -230,11 +246,8 @@ func TestAnalyticsTopCreatorsRanking(t *testing.T) {
 	}
 
 	gotTeam2 := byTeam[teamID2]
-	if len(gotTeam2) != 2 {
-		t.Fatalf("team2 expected 2 rows, got %d", len(gotTeam2))
-	}
-	if gotTeam2[0].UserID != u1 || gotTeam2[0].CreatedCount != 3 {
-		t.Fatalf("team2 rank1 mismatch: %+v", gotTeam2[0])
+	if len(gotTeam2) != 0 {
+		t.Fatalf("team2 should not be visible for user %d, got %d rows", u1, len(gotTeam2))
 	}
 }
 
@@ -301,8 +314,8 @@ func TestAnalyticsExplainUsesIndexes(t *testing.T) {
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 
-	checkExplain(t, db, explainTeamDoneStatsSQL, []any{from, to}, map[string]bool{"teams": true, "team_members": true, "tasks": true})
-	checkExplain(t, db, explainTopCreatorsSQL, []any{from, to, 3}, map[string]bool{"tasks": true})
+	checkExplain(t, db, explainTeamDoneStatsSQL, []any{from, to, u1}, map[string]bool{"teams": true, "team_members": true, "tasks": true})
+	checkExplain(t, db, explainTopCreatorsSQL, []any{from, to, u1, 3}, map[string]bool{"tasks": true})
 	checkExplain(t, db, explainIntegritySQL, nil, map[string]bool{"tasks": true, "team_members": true})
 }
 

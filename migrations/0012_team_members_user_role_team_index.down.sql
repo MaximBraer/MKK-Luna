@@ -1,0 +1,1 @@
+DROP INDEX idx_team_members_user_role_team ON team_members;

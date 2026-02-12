@@ -35,6 +35,7 @@ type Application struct {
 	auth           *service.AuthService
 	teamSvc        *service.TeamService
 	taskSvc        *service.TaskService
+	statsSvc       *service.StatsService
 	redis          *redis.Client
 	loginLimiter   drl.Limiter
 	refreshLimiter drl.Limiter
@@ -193,6 +194,7 @@ func (a *Application) initServices() error {
 	taskRepo := repository.NewTaskRepository(a.db)
 	commentRepo := repository.NewTaskCommentRepository(a.db)
 	historyRepo := repository.NewTaskHistoryRepository(a.db)
+	analyticsRepo := repository.NewAnalyticsRepository(a.db)
 
 	sessionRepo := repository.NewSessionRepository(a.db)
 	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger, a.metrics)
@@ -208,6 +210,7 @@ func (a *Application) initServices() error {
 	)
 	a.teamSvc = service.NewTeamService(a.db, teamRepo, memberRepo, userRepo, emailSender)
 	a.taskSvc = service.NewTaskService(a.db, taskRepo, teamRepo, memberRepo, commentRepo, historyRepo)
+	a.statsSvc = service.NewStatsService(analyticsRepo, a.cfg.Admin.UserIDs, a.logger)
 	return nil
 }
 
@@ -218,7 +221,10 @@ func (a *Application) initPublicRouter(ctx context.Context) error {
 	if a.teamSvc == nil || a.taskSvc == nil {
 		return fmt.Errorf("services are nil")
 	}
-	a.router = api.New(a.cfg, a.logger, a.auth, a.teamSvc, a.taskSvc, a.taskCache, a.loginLimiter, a.refreshLimiter, a.userLimiter, a.metrics)
+	if a.statsSvc == nil {
+		return fmt.Errorf("stats service is nil")
+	}
+	a.router = api.New(a.cfg, a.logger, a.auth, a.teamSvc, a.taskSvc, a.statsSvc, a.taskCache, a.loginLimiter, a.refreshLimiter, a.userLimiter, a.metrics)
 
 	port, err := parsePort(a.cfg.HTTP.Addr)
 	if err != nil {

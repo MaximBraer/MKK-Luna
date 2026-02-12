@@ -29,6 +29,7 @@ func New(
 	auth *service.AuthService,
 	teams *service.TeamService,
 	tasks *service.TaskService,
+	stats *service.StatsService,
 	taskCache cache.TaskCache,
 	loginLimiter, refreshLimiter ratelimit.Limiter,
 	userLimiter ratelimit.Limiter,
@@ -45,6 +46,7 @@ func New(
 	teamHandler := NewTeamHandler(teams)
 	taskHandler := NewTaskHandler(tasks, teams, taskCache)
 	commentHandler := NewCommentHandler(tasks)
+	statsHandler := NewStatsHandler(stats)
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -75,6 +77,10 @@ func New(
 			r.Get("/tasks/{id}/comments", commentHandler.ListByTask)
 			r.Patch("/comments/{id}", commentHandler.Update)
 			r.Delete("/comments/{id}", commentHandler.Delete)
+
+			r.Get("/stats/teams/done", statsHandler.TeamDoneStats)
+			r.Get("/stats/teams/top-creators", statsHandler.TopCreators)
+			r.Get("/admin/integrity/tasks", statsHandler.IntegrityTasks)
 		})
 	})
 

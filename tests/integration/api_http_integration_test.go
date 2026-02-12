@@ -49,6 +49,7 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
 	history := repository.NewTaskHistoryRepository(db)
+	analytics := repository.NewAnalyticsRepository(db)
 
 	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default(), nil)
 	if err != nil {
@@ -56,8 +57,9 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	}
 	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
+	statsSvc := service.NewStatsService(analytics, nil, slog.Default())
 
-	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), nil)
+	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, statsSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), nil)
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
@@ -157,6 +159,7 @@ func TestInviteEmailFailureReturns503(t *testing.T) {
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
 	history := repository.NewTaskHistoryRepository(db)
+	analytics := repository.NewAnalyticsRepository(db)
 
 	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default(), nil)
 	if err != nil {
@@ -164,8 +167,9 @@ func TestInviteEmailFailureReturns503(t *testing.T) {
 	}
 	teamSvc := service.NewTeamService(db, teams, members, users, emailFailSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
+	statsSvc := service.NewStatsService(analytics, nil, slog.Default())
 
-	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), nil)
+	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, statsSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), nil)
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
@@ -211,6 +215,7 @@ func TestGlobalUserRateLimit(t *testing.T) {
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
 	history := repository.NewTaskHistoryRepository(db)
+	analytics := repository.NewAnalyticsRepository(db)
 
 	authSvc, err := service.NewAuthService(users, sessions, *cfg, slog.Default(), nil)
 	if err != nil {
@@ -218,9 +223,10 @@ func TestGlobalUserRateLimit(t *testing.T) {
 	}
 	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
+	statsSvc := service.NewStatsService(analytics, nil, slog.Default())
 
 	userLimiter := ratelimit.NewMemory(5, 2*time.Second)
-	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), userLimiter, nil)
+	router := api.New(cfg, slog.Default(), authSvc, teamSvc, taskSvc, statsSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), userLimiter, nil)
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 

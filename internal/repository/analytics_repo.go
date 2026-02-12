@@ -2,13 +2,10 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 )
-
-var ErrInvalidLimit = errors.New("invalid limit")
 
 type TeamDoneStat struct {
 	TeamID       int64  `db:"team_id"`
@@ -58,11 +55,17 @@ LEFT JOIN (
       AND updated_at < ?
     GROUP BY team_id
 ) d ON d.team_id = t.id
+WHERE t.id IN (
+  SELECT team_id
+  FROM team_members
+  WHERE user_id = ?
+    AND role IN ('owner','admin')
+)
 `
 
-func (r *AnalyticsRepository) GetTeamDoneStats(ctx context.Context, from, to time.Time) ([]TeamDoneStat, error) {
+func (r *AnalyticsRepository) GetTeamDoneStats(ctx context.Context, userID int64, from, to time.Time) ([]TeamDoneStat, error) {
 	var rows []TeamDoneStat
-	if err := r.db.SelectContext(ctx, &rows, teamDoneStatsSQL, from, to); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, teamDoneStatsSQL, from, to, userID); err != nil {
 		return nil, err
 	}
 	return rows, nil
@@ -87,18 +90,21 @@ FROM (
       FROM tasks
       WHERE created_at >= ?
         AND created_at < ?
+        AND team_id IN (
+          SELECT team_id
+          FROM team_members
+          WHERE user_id = ?
+            AND role IN ('owner','admin')
+        )
       GROUP BY team_id, created_by
   ) base
 ) ranked
 WHERE rn <= ?
 `
 
-func (r *AnalyticsRepository) GetTopCreatorsByTeam(ctx context.Context, from, to time.Time, limit int) ([]TeamTopCreator, error) {
-	if limit <= 0 || limit > 10 {
-		return nil, ErrInvalidLimit
-	}
+func (r *AnalyticsRepository) GetTopCreatorsByTeam(ctx context.Context, userID int64, from, to time.Time, limit int) ([]TeamTopCreator, error) {
 	var rows []TeamTopCreator
-	if err := r.db.SelectContext(ctx, &rows, topCreatorsSQL, from, to, limit); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, topCreatorsSQL, from, to, userID, limit); err != nil {
 		return nil, err
 	}
 	return rows, nil

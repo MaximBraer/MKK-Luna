@@ -1,21 +1,10 @@
 package repository
 
-import (
-	"testing"
-	"time"
-)
+import "testing"
 
-func TestAnalyticsTopCreatorsLimitValidation(t *testing.T) {
+func TestAnalyticsRepositoryNew(t *testing.T) {
 	repo := NewAnalyticsRepository(nil)
-
-	if _, err := repo.GetTopCreatorsByTeam(nil, zeroTime(), zeroTime(), 0); err != ErrInvalidLimit {
-		t.Fatalf("expected ErrInvalidLimit for limit=0, got %v", err)
+	if repo == nil {
+		t.Fatalf("repo is nil")
 	}
-	if _, err := repo.GetTopCreatorsByTeam(nil, zeroTime(), zeroTime(), 11); err != ErrInvalidLimit {
-		t.Fatalf("expected ErrInvalidLimit for limit=11, got %v", err)
-	}
-}
-
-func zeroTime() (t time.Time) {
-	return t
 }

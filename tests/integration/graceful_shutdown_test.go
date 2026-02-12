@@ -38,12 +38,12 @@ func TestGracefulShutdownE2E(t *testing.T) {
 	cfg := baseConfig()
 	metrics := metricsinfra.New()
 
-	authSvc, teamSvc, taskSvc := buildServices(t, db, cfg)
+	authSvc, teamSvc, taskSvc, statsSvc := buildServices(t, db, cfg)
 
 	apiPort := freePort(t)
 	metricsPort := freePort(t)
 
-	apiRouter := api.New(cfg, nilLogger(), authSvc, teamSvc, taskSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), metrics)
+	apiRouter := api.New(cfg, nilLogger(), authSvc, teamSvc, taskSvc, statsSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), metrics)
 	apiServer := &http.Server{
 		Addr:    ":" + strconv.Itoa(apiPort),
 		Handler: apiRouter,
@@ -96,7 +96,7 @@ func baseConfig() *config.Config {
 	return cfg
 }
 
-func buildServices(t *testing.T, db *sqlx.DB, cfg *config.Config) (*service.AuthService, *service.TeamService, *service.TaskService) {
+func buildServices(t *testing.T, db *sqlx.DB, cfg *config.Config) (*service.AuthService, *service.TeamService, *service.TaskService, *service.StatsService) {
 	users := repository.NewUserRepository(db)
 	sessions := repository.NewSessionRepository(db)
 	teams := repository.NewTeamRepository(db)
@@ -104,6 +104,7 @@ func buildServices(t *testing.T, db *sqlx.DB, cfg *config.Config) (*service.Auth
 	tasks := repository.NewTaskRepository(db)
 	comments := repository.NewTaskCommentRepository(db)
 	history := repository.NewTaskHistoryRepository(db)
+	analytics := repository.NewAnalyticsRepository(db)
 
 	authSvc, err := service.NewAuthService(users, sessions, *cfg, nilLogger(), nil)
 	if err != nil {
@@ -111,7 +112,8 @@ func buildServices(t *testing.T, db *sqlx.DB, cfg *config.Config) (*service.Auth
 	}
 	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
-	return authSvc, teamSvc, taskSvc
+	statsSvc := service.NewStatsService(analytics, nil, nilLogger())
+	return authSvc, teamSvc, taskSvc, statsSvc
 }
 
 func waitHTTP(t *testing.T, url string) {

@@ -45,5 +45,7 @@ circuit_breaker:
   interval: 60s
   timeout: 30s
   failure_threshold: 5
+admin:
+  user_ids: []
 log:
   level: "info"

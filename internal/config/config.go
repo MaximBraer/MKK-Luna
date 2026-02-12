@@ -19,6 +19,7 @@ type Config struct {
 	Metrics   MetricsConfig        `yaml:"metrics"`
 	Email     EmailConfig          `yaml:"email"`
 	Circuit   CircuitBreakerConfig `yaml:"circuit_breaker"`
+	Admin     AdminConfig          `yaml:"admin"`
 	Log       LogConfig            `yaml:"log"`
 }
 
@@ -87,6 +88,10 @@ type CircuitBreakerConfig struct {
 	Interval         time.Duration `yaml:"interval" default:"60s"`
 	Timeout          time.Duration `yaml:"timeout" default:"30s"`
 	FailureThreshold uint32        `yaml:"failure_threshold" default:"5"`
+}
+
+type AdminConfig struct {
+	UserIDs []int64 `yaml:"user_ids"`
 }
 
 type LogConfig struct {
