@@ -1,4 +1,4 @@
-﻿package application
+package application
 
 import (
 	"context"
@@ -24,12 +24,14 @@ import (
 )
 
 type Application struct {
-	cfg    *config.Config
-	logger *slog.Logger
-	router *api.Router
-	db     *sqlx.DB
-	auth   *service.AuthService
-	redis  *redis.Client
+	cfg            *config.Config
+	logger         *slog.Logger
+	router         *api.Router
+	db             *sqlx.DB
+	auth           *service.AuthService
+	teamSvc        *service.TeamService
+	taskSvc        *service.TaskService
+	redis          *redis.Client
 	loginLimiter   drl.Limiter
 	refreshLimiter drl.Limiter
 	taskCache      *cache.TaskCache
@@ -165,12 +167,19 @@ func (a *Application) initRedis() error {
 
 func (a *Application) initServices() error {
 	userRepo := repository.NewUserRepository(a.db)
+	teamRepo := repository.NewTeamRepository(a.db)
+	memberRepo := repository.NewTeamMemberRepository(a.db)
+	taskRepo := repository.NewTaskRepository(a.db)
+	commentRepo := repository.NewTaskCommentRepository(a.db)
+
 	sessionRepo := repository.NewSessionRepository(a.db)
 	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger)
 	if err != nil {
 		return err
 	}
 	a.auth = authSvc
+	a.teamSvc = service.NewTeamService(a.db, teamRepo, memberRepo, userRepo)
+	a.taskSvc = service.NewTaskService(taskRepo, teamRepo, memberRepo, commentRepo)
 	return nil
 }
 
@@ -178,7 +187,10 @@ func (a *Application) initPublicRouter(ctx context.Context) error {
 	if a.auth == nil {
 		return fmt.Errorf("auth service is nil")
 	}
-	a.router = api.New(a.cfg, a.logger, a.auth, a.loginLimiter, a.refreshLimiter)
+	if a.teamSvc == nil || a.taskSvc == nil {
+		return fmt.Errorf("services are nil")
+	}
+	a.router = api.New(a.cfg, a.logger, a.auth, a.teamSvc, a.taskSvc, a.taskCache, a.loginLimiter, a.refreshLimiter)
 
 	port, err := parsePort(a.cfg.HTTP.Addr)
 	if err != nil {
