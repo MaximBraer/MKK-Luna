@@ -1,17 +1,17 @@
-﻿services:
+services:
   mysql:
     image: mysql:8.0
     container_name: mkk_luna_mysql
+    env_file:
+      - .env
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: mkk_luna
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
-    ports:
-      - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -19,8 +19,6 @@
   redis:
     image: redis:7-alpine
     container_name: mkk_luna_redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -32,11 +30,12 @@
   api:
     build: .
     container_name: mkk_luna_api
+    env_file:
+      - .env
     environment:
-      CONFIG_PATH: /app/config/local.yaml
+      CONFIG_PATH: ${CONFIG_PATH}
     ports:
-      - "8080:8080"
-      - "9091:9090"
+      - "${API_PORT}:8080"
     depends_on:
       mysql:
         condition: service_healthy
@@ -51,15 +50,13 @@
   email-mock:
     image: hashicorp/http-echo
     container_name: mkk_luna_email_mock
+    env_file:
+      - .env
     command: ["-listen=:8081", "-text=ok"]
-    ports:
-      - "8081:8081"
 
   prometheus:
     image: prom/prometheus
     container_name: mkk_luna_prometheus
-    ports:
-      - "9092:9090"
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -75,11 +72,13 @@
   grafana:
     image: grafana/grafana
     container_name: mkk_luna_grafana
+    env_file:
+      - .env
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT}:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
