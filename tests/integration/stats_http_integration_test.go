@@ -14,7 +14,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"MKK-Luna/internal/api"
-	"MKK-Luna/internal/config"
 	"MKK-Luna/internal/infra/ratelimit"
 	"MKK-Luna/internal/repository"
 	"MKK-Luna/internal/service"
@@ -67,8 +66,13 @@ func TestStatsUserScopedTeams(t *testing.T) {
 	to := time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)
 	inRange := time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC)
 
-	insertTaskWithTimes(t, ctx, db, teamID1, "done-1", "done", "medium", inRange, inRange, nil)
-	insertTaskWithTimes(t, ctx, db, teamID2, "done-2", "done", "medium", inRange, inRange, nil)
+	u1, _ := users.GetByEmail(ctx, "stats1@test.com")
+	u2, _ := users.GetByEmail(ctx, "stats2@test.com")
+	if u1 == nil || u2 == nil {
+		t.Fatalf("expected users to exist")
+	}
+	insertTaskWithTimes(t, ctx, db, teamID1, "done-1", "done", "medium", inRange, inRange, &u1.ID)
+	insertTaskWithTimes(t, ctx, db, teamID2, "done-2", "done", "medium", inRange, inRange, &u2.ID)
 
 	status, body := doJSONRequest(t, http.MethodGet, srv.URL+"/api/v1/stats/teams/done?from="+from.Format(time.RFC3339)+"&to="+to.Format(time.RFC3339), user1Token, nil)
 	if status != http.StatusOK {

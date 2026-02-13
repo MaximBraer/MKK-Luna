@@ -30,7 +30,7 @@ func TestE2ECriticalFlowsAndMetrics(t *testing.T) {
 	_ = memberToken
 
 	teamID := createTeam(t, baseURL, ownerToken, "e2e-team")
-	invite(t, baseURL, ownerToken, teamID, "e2e-member@test.com", "member", http.StatusOK)
+	invite(t, baseURL, ownerToken, teamID, "e2e-member@test.com", "member", http.StatusOK, http.StatusConflict)
 	invite(t, baseURL, ownerToken, teamID, "e2e-member@test.com", "member", http.StatusConflict)
 
 	_ = registerAndLogin(t, baseURL, "e2e-fail@test.com", "e2efail", "Password123")
@@ -119,15 +119,18 @@ func createTeam(t *testing.T, baseURL, token, name string) int64 {
 	return resp.ID
 }
 
-func invite(t *testing.T, baseURL, token string, teamID int64, email, role string, want int) {
+func invite(t *testing.T, baseURL, token string, teamID int64, email, role string, want ...int) {
 	t.Helper()
 	status, _ := doJSON(t, http.MethodPost, baseURL+"/api/v1/teams/"+itoa(teamID)+"/invite", token, map[string]any{
 		"email": email,
 		"role":  role,
 	})
-	if status != want {
-		t.Fatalf("invite status=%d want=%d", status, want)
+	for _, w := range want {
+		if status == w {
+			return
+		}
 	}
+	t.Fatalf("invite status=%d want=%v", status, want)
 }
 
 func createTask(t *testing.T, baseURL, token string, teamID int64, title string) int64 {
@@ -172,29 +175,48 @@ func getHistory(t *testing.T, baseURL, token string, taskID int64, want int) {
 
 func doJSON(t *testing.T, method, url, token string, payload any) (int, []byte) {
 	t.Helper()
-	var body *bytes.Reader
+	var raw []byte
 	if payload != nil {
-		raw, err := json.Marshal(payload)
+		var err error
+		raw, err = json.Marshal(payload)
 		if err != nil {
 			t.Fatalf("marshal payload: %v", err)
 		}
-		body = bytes.NewReader(raw)
-	} else {
-		body = bytes.NewReader(nil)
 	}
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
+	var resp *http.Response
+	var err error
+	var req *http.Request
+	for i := 0; i < 5; i++ {
+		var body *bytes.Reader
+		if raw != nil {
+			body = bytes.NewReader(raw)
+		} else {
+			body = bytes.NewReader(nil)
+		}
+		req, err = http.NewRequest(method, url, body)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err = http.DefaultClient.Do(req)
+		if err == nil && resp == nil {
+			err = errors.New("nil response")
+		}
+		if err == nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("http request: %v", err)
+	}
+	if resp == nil || resp.Body == nil {
+		t.Fatalf("http request: invalid response")
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)

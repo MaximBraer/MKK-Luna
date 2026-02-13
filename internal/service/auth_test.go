@@ -105,6 +105,23 @@ func (f *fakeSessions) WithTx(ctx context.Context, fn func(*sqlx.Tx) error) erro
 	return fn(nil)
 }
 
+type fakeMetrics struct {
+	events  map[string]int
+	reasons map[string]int
+}
+
+func newFakeMetrics() *fakeMetrics {
+	return &fakeMetrics{events: map[string]int{}, reasons: map[string]int{}}
+}
+
+func (m *fakeMetrics) IncAuthEvent(event string) {
+	m.events[event]++
+}
+
+func (m *fakeMetrics) IncAuthEventReason(event, reason string) {
+	m.reasons[event+":"+reason]++
+}
+
 func baseConfig() config.Config {
 	cfg := config.Config{}
 	cfg.JWT.Secret = "change-me-please-change-me-please-32"
@@ -236,9 +253,9 @@ func TestRefreshScenarios(t *testing.T) {
 	revoked := time.Now().Add(-time.Minute)
 
 	cases := []struct {
-		name      string
-		setup     func()
-		expected  error
+		name     string
+		setup    func()
+		expected error
 	}{
 		{
 			name: "reuse",
@@ -350,9 +367,9 @@ func TestParseAccessTokenScenarios(t *testing.T) {
 
 func TestRevokeAllByUser(t *testing.T) {
 	cases := []struct {
-		name      string
-		userID    int64
-		otherID   int64
+		name    string
+		userID  int64
+		otherID int64
 	}{
 		{name: "revoke target", userID: 1, otherID: 2},
 	}
@@ -376,4 +393,173 @@ func TestRevokeAllByUser(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseRefreshTokenUserID(t *testing.T) {
+	cfg := baseConfig()
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil)
+
+	refresh, err := auth.newToken(42, TokenTypeRefresh, time.Minute)
+	if err != nil {
+		t.Fatalf("newToken refresh: %v", err)
+	}
+	id, err := auth.ParseRefreshTokenUserID(refresh)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if id != 42 {
+		t.Fatalf("expected id 42, got %d", id)
+	}
+
+	access, err := auth.newToken(42, TokenTypeAccess, time.Minute)
+	if err != nil {
+		t.Fatalf("newToken access: %v", err)
+	}
+	if _, err := auth.ParseRefreshTokenUserID(access); err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken, got %v", err)
+	}
+}
+
+func TestLogin_MetricsAndBadPassword(t *testing.T) {
+	cfg := baseConfig()
+	users := &fakeUsers{}
+	metrics := newFakeMetrics()
+	auth, _ := NewAuthService(users, newFakeSessions(), cfg, nil, metrics)
+
+	_, _ = auth.Register(context.Background(), "u@test.com", "user1", "Password123")
+
+	_, err := auth.Login(context.Background(), "u@test.com", "BadPassword", "", "")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected invalid credentials")
+	}
+	if metrics.events["login_fail"] == 0 || metrics.reasons["login_fail:bad_password"] == 0 {
+		t.Fatalf("expected login_fail metrics for bad_password")
+	}
+}
+
+func TestLogin_DBErrorMetrics(t *testing.T) {
+	cfg := baseConfig()
+	metrics := newFakeMetrics()
+	auth, _ := NewAuthService(&errUsers{}, newFakeSessions(), cfg, nil, metrics)
+
+	_, err := auth.Login(context.Background(), "u@test.com", "Password123", "", "")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected invalid credentials")
+	}
+	if metrics.events["login_fail"] == 0 || metrics.reasons["login_fail:db_error"] == 0 {
+		t.Fatalf("expected login_fail metrics for db_error")
+	}
+}
+
+func TestRefresh_InvalidSubjectAndTxError(t *testing.T) {
+	cfg := baseConfig()
+	metrics := newFakeMetrics()
+
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, metrics)
+
+	claims := TokenClaims{
+		Type: TokenTypeRefresh,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "bad",
+			Issuer:    cfg.JWT.Issuer,
+			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(time.Minute)),
+			ID:        uuid.NewString(),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	str, _ := tok.SignedString([]byte(cfg.JWT.Secret))
+	if _, err := auth.Refresh(context.Background(), str, "", ""); err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken, got %v", err)
+	}
+
+	sessions := &errSessions{}
+	auth, _ = NewAuthService(&fakeUsers{}, sessions, cfg, nil, metrics)
+	validRefresh, _ := auth.newToken(1, TokenTypeRefresh, time.Minute)
+	if _, err := auth.Refresh(context.Background(), validRefresh, "", ""); err == nil {
+		t.Fatalf("expected error")
+	}
+	if metrics.reasons["refresh_fail:tx_error"] == 0 {
+		t.Fatalf("expected refresh_fail:tx_error metric")
+	}
+}
+
+func TestRefreshSuccessMetrics(t *testing.T) {
+	cfg := baseConfig()
+	metrics := newFakeMetrics()
+	users := &fakeUsers{}
+	sessions := newFakeSessions()
+
+	auth, _ := NewAuthService(users, sessions, cfg, nil, metrics)
+
+	_, _ = auth.Register(context.Background(), "u2@test.com", "user2", "Password123")
+	pair, err := auth.Login(context.Background(), "u2@test.com", "Password123", "1.2.3.4", "ua")
+	if err != nil {
+		t.Fatalf("login err=%v", err)
+	}
+
+	_, err = auth.Refresh(context.Background(), pair.RefreshToken, "1.2.3.4", "ua")
+	if err != nil {
+		t.Fatalf("refresh err=%v", err)
+	}
+	if metrics.events["refresh_success"] == 0 || metrics.events["revoke"] == 0 {
+		t.Fatalf("expected refresh_success and revoke metrics")
+	}
+}
+
+func TestLoginByUsername(t *testing.T) {
+	cfg := baseConfig()
+	users := &fakeUsers{}
+	auth, _ := NewAuthService(users, newFakeSessions(), cfg, nil, newFakeMetrics())
+
+	_, _ = auth.Register(context.Background(), "u3@test.com", "user3", "Password123")
+	_, err := auth.Login(context.Background(), "user3", "Password123", "", "")
+	if err != nil {
+		t.Fatalf("login by username err=%v", err)
+	}
+}
+
+type errUsers struct{}
+
+func (e *errUsers) Create(ctx context.Context, email, username, passwordHash string) (int64, error) {
+	return 0, errors.New("db")
+}
+func (e *errUsers) GetByEmail(ctx context.Context, email string) (*repository.User, error) {
+	return nil, errors.New("db")
+}
+func (e *errUsers) GetByUsername(ctx context.Context, username string) (*repository.User, error) {
+	return nil, errors.New("db")
+}
+
+type errSessions struct{}
+
+func (e *errSessions) Create(ctx context.Context, s *repository.Session) (int64, error) {
+	return 0, errors.New("db")
+}
+func (e *errSessions) GetByTokenHash(ctx context.Context, tokenHash string) (*repository.Session, error) {
+	return nil, errors.New("db")
+}
+func (e *errSessions) GetByTokenHashForUpdate(ctx context.Context, tx *sqlx.Tx, tokenHash string) (*repository.Session, error) {
+	return nil, errors.New("db")
+}
+func (e *errSessions) Revoke(ctx context.Context, tokenHash string, revokedAt time.Time) error {
+	return errors.New("db")
+}
+func (e *errSessions) UpdateLastUsed(ctx context.Context, tokenHash string, ts time.Time) error {
+	return errors.New("db")
+}
+func (e *errSessions) RevokeAllByUser(ctx context.Context, userID int64, revokedAt time.Time) error {
+	return errors.New("db")
+}
+func (e *errSessions) GetActiveSessionsByUser(ctx context.Context, userID int64) ([]repository.Session, error) {
+	return nil, errors.New("db")
+}
+func (e *errSessions) WithTx(ctx context.Context, fn func(*sqlx.Tx) error) error {
+	return errors.New("db")
+}
+func (e *errSessions) CreateWithTx(ctx context.Context, tx *sqlx.Tx, s *repository.Session) (int64, error) {
+	return 0, errors.New("db")
+}
+func (e *errSessions) RevokeWithTx(ctx context.Context, tx *sqlx.Tx, tokenHash string, revokedAt time.Time) error {
+	return errors.New("db")
 }

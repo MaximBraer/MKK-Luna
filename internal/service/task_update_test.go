@@ -213,6 +213,18 @@ func TestTaskService_UpdateTask_ErrorsBeforeValidation(t *testing.T) {
 func TestTaskService_GetTaskHistory(t *testing.T) {
 	svc := NewTaskService(
 		nil,
+		&fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return &repository.Task{ID: 1, TeamID: 1}, nil }},
+		&fakeTeamRepo{},
+		&fakeMemberRepo{},
+		&fakeCommentRepo{},
+		nil,
+	)
+	if _, _, err := svc.GetTaskHistory(context.Background(), 1, 1, 20, 0); err != ErrBadRequest {
+		t.Fatalf("expected ErrBadRequest, got %v", err)
+	}
+
+	svc = NewTaskService(
+		nil,
 		&fakeTaskRepo{getByID: func(context.Context, int64) (*repository.Task, error) { return nil, nil }},
 		&fakeTeamRepo{},
 		&fakeMemberRepo{},

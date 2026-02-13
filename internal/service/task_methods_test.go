@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"testing"
+	"time"
 
 	"MKK-Luna/internal/repository"
 )
@@ -371,6 +373,54 @@ func TestTaskService_ListTaskErrors(t *testing.T) {
 	if _, _, err := svc.ListTasks(context.Background(), 1, TaskListInput{TeamID: 1, Limit: 10, Offset: 0}); err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden got %v", err)
 	}
+}
+
+func TestBuildTaskDiffEntries_AllFields(t *testing.T) {
+	desc := sqlNullString("old")
+	assignee := sqlNullInt64(7)
+	due := sqlNullTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	task := repository.Task{
+		ID:          1,
+		TeamID:      1,
+		Title:       "old",
+		Description: desc,
+		Status:      "todo",
+		Priority:    "low",
+		AssigneeID:  assignee,
+		DueDate:     due,
+	}
+
+	newDesc := (*string)(nil)
+	newAssignee := (*int64)(nil)
+	newDue := time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)
+	parsed := map[string]any{
+		"title":       "new",
+		"description": newDesc,
+		"status":      "done",
+		"priority":    "high",
+		"assignee_id": newAssignee,
+		"due_date":    &newDue,
+	}
+
+	updates, entries := buildTaskDiffEntries(task, 10, parsed)
+	if len(updates) != 6 {
+		t.Fatalf("expected 6 updates, got %d", len(updates))
+	}
+	if len(entries) != 6 {
+		t.Fatalf("expected 6 history entries, got %d", len(entries))
+	}
+}
+
+func sqlNullString(v string) sql.NullString {
+	return sql.NullString{String: v, Valid: true}
+}
+
+func sqlNullInt64(v int64) sql.NullInt64 {
+	return sql.NullInt64{Int64: v, Valid: true}
+}
+
+func sqlNullTime(t time.Time) sql.NullTime {
+	return sql.NullTime{Time: t, Valid: true}
 }
 
 func TestTaskService_CommentForbiddenCases(t *testing.T) {
