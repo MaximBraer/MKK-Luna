@@ -40,10 +40,12 @@ type inviteRequest struct {
 // @Tags teams
 // @Accept json
 // @Produce json
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Param request body createTeamRequest true "Create team"
 // @Success 201 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 401 {object} response.ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/teams [post]
 func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -109,6 +111,7 @@ func (h *TeamHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Param id path int true "Team ID"
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Param request body inviteRequest true "Invite request"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
@@ -116,6 +119,7 @@ func (h *TeamHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure 403 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
 // @Failure 409 {object} response.ErrorResponse
+// @Failure 429 {object} response.ErrorResponse
 // @Router /api/v1/teams/{id}/invite [post]
 func (h *TeamHandler) Invite(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

@@ -19,7 +19,7 @@ func TestTeamService_CreateTeam_BeginTxError(t *testing.T) {
 	beginErr := errors.New("begin failed")
 	mock.ExpectBegin().WillReturnError(beginErr)
 
-	svc := NewTeamService(sqlx.NewDb(db, "sqlmock"), &fakeTeamStore{}, &fakeTeamMemberStore{}, &fakeUserStore{}, nil)
+	svc := NewTeamService(sqlx.NewDb(db, "sqlmock"), &fakeTeamStore{}, &fakeTeamMemberStore{}, &fakeUserStore{}, nil, nil, 0, nil, nil)
 	_, err = svc.CreateTeam(context.Background(), 1, "team")
 	if err == nil || err.Error() != beginErr.Error() {
 		t.Fatalf("expected begin error, got %v", err)
@@ -49,6 +49,10 @@ func TestTeamService_CreateTeam_CreateTxError(t *testing.T) {
 		},
 		&fakeTeamMemberStore{},
 		&fakeUserStore{},
+		nil,
+		nil,
+		0,
+		nil,
 		nil,
 	)
 	_, err = svc.CreateTeam(context.Background(), 1, "team")
@@ -85,6 +89,10 @@ func TestTeamService_CreateTeam_AddMemberTxError(t *testing.T) {
 		},
 		&fakeUserStore{},
 		nil,
+		nil,
+		0,
+		nil,
+		nil,
 	)
 	_, err = svc.CreateTeam(context.Background(), 1, "team")
 	if err == nil || err.Error() != addErr.Error() {
@@ -119,6 +127,10 @@ func TestTeamService_CreateTeam_CommitError(t *testing.T) {
 			},
 		},
 		&fakeUserStore{},
+		nil,
+		nil,
+		0,
+		nil,
 		nil,
 	)
 	_, err = svc.CreateTeam(context.Background(), 1, "team")

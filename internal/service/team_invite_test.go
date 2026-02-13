@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
@@ -87,6 +88,25 @@ func (f fakeEmailSender) SendInvite(ctx context.Context, toEmail, teamName strin
 	return f.err
 }
 
+type fakeInviteLocker struct {
+	acquire func(ctx context.Context, key string, ttl time.Duration) (string, bool, error)
+	release func(ctx context.Context, key, token string) error
+}
+
+func (f *fakeInviteLocker) Acquire(ctx context.Context, key string, ttl time.Duration) (string, bool, error) {
+	if f.acquire != nil {
+		return f.acquire(ctx, key, ttl)
+	}
+	return "token", true, nil
+}
+
+func (f *fakeInviteLocker) Release(ctx context.Context, key, token string) error {
+	if f.release != nil {
+		return f.release(ctx, key, token)
+	}
+	return nil
+}
+
 func TestTeamService_InviteByEmail_Table(t *testing.T) {
 	baseTeam := &repository.Team{ID: 1, Name: "team"}
 	baseUser := &repository.User{ID: 99, Email: "u@test.com"}
@@ -99,6 +119,7 @@ func TestTeamService_InviteByEmail_Table(t *testing.T) {
 		isMemFn    func(ctx context.Context, teamID, userID int64) (bool, error)
 		addFn      func(ctx context.Context, teamID, userID int64, role string) error
 		emailErr   error
+		locker     *fakeInviteLocker
 		targetRole string
 		wantErr    error
 	}{
@@ -177,6 +198,28 @@ func TestTeamService_InviteByEmail_Table(t *testing.T) {
 			wantErr:    ErrUnavailable,
 		},
 		{
+			name:       "invite lock already held",
+			teamFn:     func(context.Context, int64) (*repository.Team, error) { return baseTeam, nil },
+			roleFn:     func(context.Context, int64, int64) (string, bool, error) { return RoleOwner, true, nil },
+			userFn:     func(context.Context, string) (*repository.User, error) { return baseUser, nil },
+			locker:     &fakeInviteLocker{acquire: func(context.Context, string, time.Duration) (string, bool, error) { return "", false, nil }},
+			targetRole: RoleMember,
+			wantErr:    ErrConflict,
+		},
+		{
+			name:    "invite lock redis error fallback",
+			teamFn:  func(context.Context, int64) (*repository.Team, error) { return baseTeam, nil },
+			roleFn:  func(context.Context, int64, int64) (string, bool, error) { return RoleOwner, true, nil },
+			userFn:  func(context.Context, string) (*repository.User, error) { return baseUser, nil },
+			isMemFn: func(context.Context, int64, int64) (bool, error) { return false, nil },
+			addFn:   func(context.Context, int64, int64, string) error { return nil },
+			locker: &fakeInviteLocker{acquire: func(context.Context, string, time.Duration) (string, bool, error) {
+				return "", false, errors.New("redis down")
+			}},
+			targetRole: RoleMember,
+			wantErr:    nil,
+		},
+		{
 			name:       "success",
 			teamFn:     func(context.Context, int64) (*repository.Team, error) { return baseTeam, nil },
 			roleFn:     func(context.Context, int64, int64) (string, bool, error) { return RoleOwner, true, nil },
@@ -190,12 +233,20 @@ func TestTeamService_InviteByEmail_Table(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var locker InviteLocker
+			if tt.locker != nil {
+				locker = tt.locker
+			}
 			svc := NewTeamService(
 				nil,
 				&fakeTeamStore{getByID: tt.teamFn},
 				&fakeTeamMemberStore{getRole: tt.roleFn, isMember: tt.isMemFn, add: tt.addFn},
 				&fakeUserStore{getByEmail: tt.userFn},
 				fakeEmailSender{err: tt.emailErr},
+				locker,
+				0,
+				nil,
+				nil,
 			)
 			err := svc.InviteByEmail(context.Background(), 1, 1, "u@test.com", tt.targetRole)
 			switch {

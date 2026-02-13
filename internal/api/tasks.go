@@ -80,12 +80,14 @@ type listTaskHistoryResponse struct {
 // @Tags tasks
 // @Accept json
 // @Produce json
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Param request body createTaskRequest true "Create task"
 // @Success 201 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 401 {object} response.ErrorResponse
 // @Failure 403 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/tasks [post]
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -289,12 +291,14 @@ func (h *TaskHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Param id path int true "Task ID"
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Param request body map[string]interface{} true "Patch payload"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 401 {object} response.ErrorResponse
 // @Failure 403 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/tasks/{id} [patch]
 func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -342,11 +346,13 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Tags tasks
 // @Produce json
 // @Param id path int true "Task ID"
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 401 {object} response.ErrorResponse
 // @Failure 403 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/tasks/{id} [delete]
 func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

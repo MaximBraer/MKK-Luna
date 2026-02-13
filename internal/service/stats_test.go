@@ -15,6 +15,37 @@ type fakeAnalyticsRepo struct {
 	err       error
 }
 
+type fakeStatsCache struct {
+	doneItems []repository.TeamDoneStat
+	topItems  []repository.TeamTopCreator
+	doneHit   bool
+	topHit    bool
+}
+
+func (f *fakeStatsCache) GetDone(ctx context.Context, userID int64, from, to time.Time) ([]repository.TeamDoneStat, bool, error) {
+	if f.doneHit {
+		return f.doneItems, true, nil
+	}
+	return nil, false, nil
+}
+
+func (f *fakeStatsCache) SetDone(ctx context.Context, userID int64, from, to time.Time, items []repository.TeamDoneStat) error {
+	f.doneItems = items
+	return nil
+}
+
+func (f *fakeStatsCache) GetTop(ctx context.Context, userID int64, from, to time.Time, limit int) ([]repository.TeamTopCreator, bool, error) {
+	if f.topHit {
+		return f.topItems, true, nil
+	}
+	return nil, false, nil
+}
+
+func (f *fakeStatsCache) SetTop(ctx context.Context, userID int64, from, to time.Time, limit int, items []repository.TeamTopCreator) error {
+	f.topItems = items
+	return nil
+}
+
 func (f *fakeAnalyticsRepo) GetTeamDoneStats(ctx context.Context, userID int64, from, to time.Time) ([]repository.TeamDoneStat, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -37,7 +68,7 @@ func (f *fakeAnalyticsRepo) FindTasksWithAssigneeNotMember(ctx context.Context) 
 }
 
 func TestStatsServiceRangeValidation(t *testing.T) {
-	svc := NewStatsService(&fakeAnalyticsRepo{}, nil, nil)
+	svc := NewStatsService(&fakeAnalyticsRepo{}, nil, nil, nil)
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := svc.GetTeamDoneStats(context.Background(), 1, now, now); err != ErrBadRequest {
@@ -54,7 +85,7 @@ func TestStatsServiceRangeValidation(t *testing.T) {
 }
 
 func TestStatsServiceLimitValidation(t *testing.T) {
-	svc := NewStatsService(&fakeAnalyticsRepo{}, nil, nil)
+	svc := NewStatsService(&fakeAnalyticsRepo{}, nil, nil, nil)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	later := now.Add(24 * time.Hour)
 
@@ -67,7 +98,7 @@ func TestStatsServiceLimitValidation(t *testing.T) {
 }
 
 func TestStatsServiceEmptyTeamsReturnsEmpty(t *testing.T) {
-	svc := NewStatsService(&fakeAnalyticsRepo{done: nil}, nil, nil)
+	svc := NewStatsService(&fakeAnalyticsRepo{done: nil}, nil, nil, nil)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	later := now.Add(24 * time.Hour)
 
@@ -81,9 +112,28 @@ func TestStatsServiceEmptyTeamsReturnsEmpty(t *testing.T) {
 }
 
 func TestStatsServiceAdminAllowlistEmpty(t *testing.T) {
-	svc := NewStatsService(&fakeAnalyticsRepo{}, nil, nil)
+	svc := NewStatsService(&fakeAnalyticsRepo{}, nil, nil, nil)
 	_, err := svc.FindTasksWithAssigneeNotMember(context.Background(), 1)
 	if err != ErrForbidden {
 		t.Fatalf("expected ErrForbidden for empty allowlist, got %v", err)
+	}
+}
+
+func TestStatsServiceUsesCache(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	later := now.Add(24 * time.Hour)
+
+	cache := &fakeStatsCache{
+		doneHit:   true,
+		doneItems: []repository.TeamDoneStat{{TeamID: 9, DoneCount: 11}},
+	}
+	svc := NewStatsService(&fakeAnalyticsRepo{done: []repository.TeamDoneStat{{TeamID: 1, DoneCount: 1}}}, cache, nil, nil)
+
+	rows, err := svc.GetTeamDoneStats(context.Background(), 1, now, later)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].TeamID != 9 {
+		t.Fatalf("expected cached rows, got %+v", rows)
 	}
 }

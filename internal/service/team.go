@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
+	"strconv"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
@@ -23,6 +26,10 @@ type TeamService struct {
 	members teamMemberStore
 	users   userStore
 	email   EmailSender
+	locker  InviteLocker
+	lockTTL time.Duration
+	logger  *slog.Logger
+	metrics TeamMetrics
 }
 
 type teamStore interface {
@@ -46,8 +53,30 @@ type EmailSender interface {
 	SendInvite(ctx context.Context, toEmail, teamName string) error
 }
 
-func NewTeamService(db *sqlx.DB, teams teamStore, members teamMemberStore, users userStore, emailSender EmailSender) *TeamService {
-	return &TeamService{db: db, teams: teams, members: members, users: users, email: emailSender}
+type InviteLocker interface {
+	Acquire(ctx context.Context, key string, ttl time.Duration) (token string, ok bool, err error)
+	Release(ctx context.Context, key, token string) error
+}
+
+type TeamMetrics interface {
+	IncLockReleaseError()
+}
+
+func NewTeamService(
+	db *sqlx.DB,
+	teams teamStore,
+	members teamMemberStore,
+	users userStore,
+	emailSender EmailSender,
+	locker InviteLocker,
+	lockTTL time.Duration,
+	logger *slog.Logger,
+	metrics TeamMetrics,
+) *TeamService {
+	return &TeamService{
+		db: db, teams: teams, members: members, users: users, email: emailSender,
+		locker: locker, lockTTL: lockTTL, logger: logger, metrics: metrics,
+	}
 }
 
 func (s *TeamService) CreateTeam(ctx context.Context, userID int64, name string) (int64, error) {
@@ -118,6 +147,29 @@ func (s *TeamService) InviteByEmail(ctx context.Context, inviterID, teamID int64
 	}
 	if user == nil {
 		return ErrNotFound
+	}
+
+	if s.locker != nil {
+		lockKey := "lock:invite:" + strconv.FormatInt(teamID, 10) + ":" + strconv.FormatInt(user.ID, 10)
+		lockToken, ok, err := s.locker.Acquire(ctx, lockKey, s.lockTTL)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("invite lock acquire failed, bypassing", "err", err, "team_id", teamID, "user_id", user.ID)
+			}
+		} else if !ok {
+			return ErrConflict
+		} else {
+			defer func() {
+				if err := s.locker.Release(context.Background(), lockKey, lockToken); err != nil {
+					if s.logger != nil {
+						s.logger.Warn("invite lock release failed", "err", err, "team_id", teamID, "user_id", user.ID)
+					}
+					if s.metrics != nil {
+						s.metrics.IncLockReleaseError()
+					}
+				}
+			}()
+		}
 	}
 
 	if ok, err := s.members.IsMember(ctx, teamID, user.ID); err != nil {

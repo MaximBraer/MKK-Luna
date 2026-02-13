@@ -40,12 +40,14 @@ type commentResponse struct {
 // @Accept json
 // @Produce json
 // @Param id path int true "Task ID"
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Param request body commentRequest true "Comment payload"
 // @Success 201 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 401 {object} response.ErrorResponse
 // @Failure 403 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/tasks/{id}/comments [post]
 func (h *CommentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -134,12 +136,14 @@ func (h *CommentHandler) ListByTask(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Param id path int true "Comment ID"
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Param request body commentRequest true "Comment payload"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 401 {object} response.ErrorResponse
 // @Failure 403 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/comments/{id} [patch]
 func (h *CommentHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -177,11 +181,13 @@ func (h *CommentHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Tags comments
 // @Produce json
 // @Param id path int true "Comment ID"
+// @Param Idempotency-Key header string false "Idempotency key for safe retries"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 401 {object} response.ErrorResponse
 // @Failure 403 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/comments/{id} [delete]
 func (h *CommentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

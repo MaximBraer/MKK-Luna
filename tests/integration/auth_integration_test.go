@@ -76,7 +76,7 @@ func TestAuthIntegration(t *testing.T) {
 
 	users := repository.NewUserRepository(db)
 	sessions := repository.NewSessionRepository(db)
-	auth, err := service.NewAuthService(users, sessions, cfg, nil, nil)
+	auth, err := service.NewAuthService(users, sessions, cfg, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("auth init: %v", err)
 	}

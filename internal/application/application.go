@@ -17,11 +17,14 @@ import (
 	"MKK-Luna/internal/api"
 	"MKK-Luna/internal/config"
 	drl "MKK-Luna/internal/domain/ratelimit"
+	authinfra "MKK-Luna/internal/infra/auth"
 	"MKK-Luna/internal/infra/cache"
 	emailinfra "MKK-Luna/internal/infra/email"
+	ideminfra "MKK-Luna/internal/infra/idempotency"
 	metricsinfra "MKK-Luna/internal/infra/metrics"
 	rl "MKK-Luna/internal/infra/ratelimit"
 	redisinfra "MKK-Luna/internal/infra/redis"
+	redislock "MKK-Luna/internal/infra/redislock"
 	"MKK-Luna/internal/repository"
 	"MKK-Luna/internal/service"
 	"MKK-Luna/pkg/nethttp/runner"
@@ -41,6 +44,10 @@ type Application struct {
 	refreshLimiter drl.Limiter
 	userLimiter    drl.Limiter
 	taskCache      *cache.TaskCache
+	statsCache     *cache.StatsCache
+	lockout        *authinfra.Lockout
+	idemStore      *ideminfra.Store
+	locker         *redislock.Locker
 	metrics        *metricsinfra.Metrics
 	metricsServer  *http.Server
 
@@ -184,6 +191,17 @@ func (a *Application) initRedis() error {
 	}
 
 	a.taskCache = cache.NewTaskCache(a.redis, a.cfg.Cache.TaskCacheTTL, a.cfg.Cache.Enabled, a.logger, a.metrics)
+	a.statsCache = cache.NewStatsCache(a.redis, a.cfg.Cache.StatsTTL, a.cfg.Cache.Enabled, a.logger, a.metrics)
+	a.lockout = authinfra.NewLockout(
+		a.redis,
+		a.cfg.Auth.Lockout.MaxAttempts,
+		a.cfg.Auth.Lockout.LockTTL,
+		a.cfg.Auth.Lockout.KeyMaxLen,
+		a.logger,
+		a.metrics,
+	)
+	a.idemStore = ideminfra.NewStore(a.redis)
+	a.locker = redislock.New(a.redis, a.logger, a.metrics)
 	return nil
 }
 
@@ -197,7 +215,7 @@ func (a *Application) initServices() error {
 	analyticsRepo := repository.NewAnalyticsRepository(a.db)
 
 	sessionRepo := repository.NewSessionRepository(a.db)
-	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger, a.metrics)
+	authSvc, err := service.NewAuthService(userRepo, sessionRepo, *a.cfg, a.logger, a.metrics, authinfra.NewJWTBlacklist(a.redis))
 	if err != nil {
 		return err
 	}
@@ -208,9 +226,9 @@ func (a *Application) initServices() error {
 		a.logger,
 		a.metrics,
 	)
-	a.teamSvc = service.NewTeamService(a.db, teamRepo, memberRepo, userRepo, emailSender)
+	a.teamSvc = service.NewTeamService(a.db, teamRepo, memberRepo, userRepo, emailSender, a.locker, a.cfg.Idem.LockTTL, a.logger, a.metrics)
 	a.taskSvc = service.NewTaskService(a.db, taskRepo, teamRepo, memberRepo, commentRepo, historyRepo)
-	a.statsSvc = service.NewStatsService(analyticsRepo, a.cfg.Admin.UserIDs, a.logger)
+	a.statsSvc = service.NewStatsService(analyticsRepo, a.statsCache, a.cfg.Admin.UserIDs, a.logger)
 	return nil
 }
 
@@ -224,7 +242,22 @@ func (a *Application) initPublicRouter(ctx context.Context) error {
 	if a.statsSvc == nil {
 		return fmt.Errorf("stats service is nil")
 	}
-	a.router = api.New(a.cfg, a.logger, a.auth, a.teamSvc, a.taskSvc, a.statsSvc, a.taskCache, a.loginLimiter, a.refreshLimiter, a.userLimiter, a.metrics)
+	a.router = api.New(
+		a.cfg,
+		a.logger,
+		a.auth,
+		a.teamSvc,
+		a.taskSvc,
+		a.statsSvc,
+		a.taskCache,
+		a.loginLimiter,
+		a.refreshLimiter,
+		a.userLimiter,
+		a.lockout,
+		a.idemStore,
+		a.locker,
+		a.metrics,
+	)
 
 	port, err := parsePort(a.cfg.HTTP.Addr)
 	if err != nil {

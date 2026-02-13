@@ -35,7 +35,7 @@ func AuthMiddleware(auth *service.AuthService) func(http.Handler) http.Handler {
 				response.Error(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
-			userID, err := auth.ParseAccessToken(parts[1])
+			userID, err := auth.ParseAccessTokenCtx(r.Context(), parts[1])
 			if err != nil {
 				response.Error(w, http.StatusUnauthorized, "unauthorized")
 				return

@@ -15,6 +15,7 @@ type Config struct {
 	JWT       JWTConfig            `yaml:"jwt"`
 	Auth      AuthConfig           `yaml:"auth"`
 	Cache     CacheConfig          `yaml:"cache"`
+	Idem      IdempotencyConfig    `yaml:"idempotency"`
 	RateLimit RateLimitConfig      `yaml:"ratelimit"`
 	Metrics   MetricsConfig        `yaml:"metrics"`
 	Email     EmailConfig          `yaml:"email"`
@@ -49,11 +50,17 @@ type RedisConfig struct {
 }
 
 type JWTConfig struct {
-	AccessTTL  time.Duration `yaml:"access_ttl" default:"15m"`
-	RefreshTTL time.Duration `yaml:"refresh_ttl" default:"720h"`
-	Secret     string        `yaml:"secret" default:"change-me-please-change-me-please-32"`
-	Issuer     string        `yaml:"issuer" default:"task-service"`
-	ClockSkew  time.Duration `yaml:"clock_skew" default:"60s"`
+	AccessTTL  time.Duration      `yaml:"access_ttl" default:"15m"`
+	RefreshTTL time.Duration      `yaml:"refresh_ttl" default:"720h"`
+	Secret     string             `yaml:"secret" default:"change-me-please-change-me-please-32"`
+	Issuer     string             `yaml:"issuer" default:"task-service"`
+	ClockSkew  time.Duration      `yaml:"clock_skew" default:"60s"`
+	Blacklist  JWTBlacklistConfig `yaml:"blacklist"`
+}
+
+type JWTBlacklistConfig struct {
+	Enabled  bool `yaml:"enabled" default:"true"`
+	FailOpen bool `yaml:"fail_open" default:"true"`
 }
 
 type RateLimitConfig struct {
@@ -63,14 +70,28 @@ type RateLimitConfig struct {
 }
 
 type AuthConfig struct {
-	BcryptCost    int `yaml:"bcrypt_cost" default:"12"`
-	LoginPerMin   int `yaml:"login_per_min" default:"5"`
-	RefreshPerMin int `yaml:"refresh_per_min" default:"20"`
+	BcryptCost    int               `yaml:"bcrypt_cost" default:"12"`
+	LoginPerMin   int               `yaml:"login_per_min" default:"5"`
+	RefreshPerMin int               `yaml:"refresh_per_min" default:"20"`
+	Lockout       AuthLockoutConfig `yaml:"lockout"`
+}
+
+type AuthLockoutConfig struct {
+	MaxAttempts int           `yaml:"max_attempts" default:"10"`
+	LockTTL     time.Duration `yaml:"lock_ttl" default:"10m"`
+	KeyMaxLen   int           `yaml:"key_max_len" default:"128"`
 }
 
 type CacheConfig struct {
 	Enabled      bool          `yaml:"enabled" default:"true"`
 	TaskCacheTTL time.Duration `yaml:"task_ttl" default:"5m"`
+	StatsTTL     time.Duration `yaml:"stats_ttl" default:"30s"`
+}
+
+type IdempotencyConfig struct {
+	Enabled     bool          `yaml:"enabled" default:"true"`
+	LockTTL     time.Duration `yaml:"lock_ttl" default:"30s"`
+	ResponseTTL time.Duration `yaml:"response_ttl" default:"10m"`
 }
 
 type MetricsConfig struct {

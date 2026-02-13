@@ -43,7 +43,7 @@ func TestGracefulShutdownE2E(t *testing.T) {
 	apiPort := freePort(t)
 	metricsPort := freePort(t)
 
-	apiRouter := api.New(cfg, nilLogger(), authSvc, teamSvc, taskSvc, statsSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), metrics)
+	apiRouter := api.New(cfg, nilLogger(), authSvc, teamSvc, taskSvc, statsSvc, nil, ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), ratelimit.NewMemory(1000, time.Minute), nil, nil, nil, metrics)
 	apiServer := &http.Server{
 		Addr:    ":" + strconv.Itoa(apiPort),
 		Handler: apiRouter,
@@ -106,13 +106,13 @@ func buildServices(t *testing.T, db *sqlx.DB, cfg *config.Config) (*service.Auth
 	history := repository.NewTaskHistoryRepository(db)
 	analytics := repository.NewAnalyticsRepository(db)
 
-	authSvc, err := service.NewAuthService(users, sessions, *cfg, nilLogger(), nil)
+	authSvc, err := service.NewAuthService(users, sessions, *cfg, nilLogger(), nil, nil)
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
 	}
-	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{})
+	teamSvc := service.NewTeamService(db, teams, members, users, emailOKSender{}, nil, 0, nil, nil)
 	taskSvc := service.NewTaskService(db, tasks, teams, members, comments, history)
-	statsSvc := service.NewStatsService(analytics, nil, nilLogger())
+	statsSvc := service.NewStatsService(analytics, nil, nil, nilLogger())
 	return authSvc, teamSvc, taskSvc, statsSvc
 }
 

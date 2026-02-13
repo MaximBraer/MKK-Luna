@@ -97,8 +97,10 @@ definitions:
         type: string
       id:
         type: integer
-      new_value: {}
-      old_value: {}
+      new_value:
+        type: any
+      old_value:
+        type: any
       task_id:
         type: integer
     type: object
@@ -230,6 +232,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -254,6 +260,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/response.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Delete comment
       tags:
       - comments
@@ -266,6 +276,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Comment payload
         in: body
         name: request
@@ -294,6 +308,10 @@ paths:
             $ref: '#/definitions/response.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/response.ErrorResponse'
       summary: Patch comment
@@ -523,6 +541,10 @@ paths:
       consumes:
       - application/json
       parameters:
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Create task
         in: body
         name: request
@@ -553,6 +575,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/response.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Create task
       tags:
       - tasks
@@ -564,6 +590,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -586,6 +616,10 @@ paths:
             $ref: '#/definitions/response.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/response.ErrorResponse'
       summary: Delete task
@@ -633,6 +667,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Patch payload
         in: body
         name: request
@@ -662,6 +700,10 @@ paths:
             $ref: '#/definitions/response.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/response.ErrorResponse'
       summary: Patch task
@@ -711,6 +753,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Comment payload
         in: body
         name: request
@@ -739,6 +785,10 @@ paths:
             $ref: '#/definitions/response.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/response.ErrorResponse'
       summary: Create comment
@@ -807,6 +857,10 @@ paths:
       consumes:
       - application/json
       parameters:
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Create team
         in: body
         name: request
@@ -829,6 +883,10 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/response.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Create team
       tags:
       - teams
@@ -842,6 +900,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Idempotency key for safe retries
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Invite request
         in: body
         name: request
@@ -874,6 +936,10 @@ paths:
             $ref: '#/definitions/response.ErrorResponse'
         "409":
           description: Conflict
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "429":
+          description: Too Many Requests
           schema:
             $ref: '#/definitions/response.ErrorResponse'
       summary: Invite user by email

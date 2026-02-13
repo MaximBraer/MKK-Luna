@@ -12,7 +12,10 @@ import (
 	"MKK-Luna/internal/config"
 	"MKK-Luna/internal/domain/cache"
 	"MKK-Luna/internal/domain/ratelimit"
+	authinfra "MKK-Luna/internal/infra/auth"
+	ideminfra "MKK-Luna/internal/infra/idempotency"
 	metricsinfra "MKK-Luna/internal/infra/metrics"
+	redislock "MKK-Luna/internal/infra/redislock"
 	"MKK-Luna/internal/service"
 )
 
@@ -34,6 +37,9 @@ func New(
 	taskCache cache.TaskCache,
 	loginLimiter, refreshLimiter ratelimit.Limiter,
 	userLimiter ratelimit.Limiter,
+	lockout *authinfra.Lockout,
+	idemStore *ideminfra.Store,
+	locker *redislock.Locker,
 	metrics *metricsinfra.Metrics,
 ) *Router {
 	r := chi.NewRouter()
@@ -43,7 +49,7 @@ func New(
 	r.Use(middlewarex.Logger(logger))
 	r.Use(middlewarex.Metrics(metrics))
 
-	authHandler := NewAuthHandler(auth, loginLimiter, refreshLimiter)
+	authHandler := NewAuthHandler(auth, loginLimiter, refreshLimiter, lockout)
 	teamHandler := NewTeamHandler(teams)
 	taskHandler := NewTaskHandler(tasks, teams, taskCache)
 	commentHandler := NewCommentHandler(tasks)
@@ -64,6 +70,15 @@ func New(
 
 		r.Group(func(r chi.Router) {
 			r.Use(middlewarex.AuthMiddleware(auth))
+			r.Use(middlewarex.NewIdempotencyMiddleware(
+				cfg.Idem.Enabled,
+				idemStore,
+				locker,
+				cfg.Idem.LockTTL,
+				cfg.Idem.ResponseTTL,
+				logger,
+				metrics,
+			).Handler)
 			r.Use(middlewarex.UserRateLimit(userLimiter, cfg.RateLimit.WindowSeconds, logger))
 
 			r.Post("/teams", teamHandler.Create)

@@ -23,13 +23,25 @@ jwt:
   secret: "change-me-please-change-me-please-32"
   issuer: "task-service"
   clock_skew: 60s
+  blacklist:
+    enabled: true
+    fail_open: true
 auth:
   bcrypt_cost: 12
   login_per_min: 5
   refresh_per_min: 20
+  lockout:
+    max_attempts: 10
+    lock_ttl: 10m
+    key_max_len: 128
 cache:
   enabled: true
   task_ttl: 5m
+  stats_ttl: 30s
+idempotency:
+  enabled: true
+  lock_ttl: 30s
+  response_ttl: 10m
 ratelimit:
   enabled: true
   window_seconds: 60

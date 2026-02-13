@@ -37,6 +37,7 @@ type AuthService struct {
 	cfg      config.Config
 	logger   *slog.Logger
 	metrics  AuthMetrics
+	bl       TokenBlacklist
 }
 
 type TokenPair struct {
@@ -71,9 +72,15 @@ type SessionStore interface {
 type AuthMetrics interface {
 	IncAuthEvent(event string)
 	IncAuthEventReason(event, reason string)
+	IncJWTBlacklistRedisError()
 }
 
-func NewAuthService(users UserStore, sessions SessionStore, cfg config.Config, logger *slog.Logger, metrics AuthMetrics) (*AuthService, error) {
+type TokenBlacklist interface {
+	IsRevoked(ctx context.Context, jti string) (bool, error)
+	Revoke(ctx context.Context, jti string, ttl time.Duration) error
+}
+
+func NewAuthService(users UserStore, sessions SessionStore, cfg config.Config, logger *slog.Logger, metrics AuthMetrics, blacklist TokenBlacklist) (*AuthService, error) {
 	if len(cfg.JWT.Secret) < 32 {
 		return nil, errors.New("jwt secret must be at least 32 bytes")
 	}
@@ -83,7 +90,7 @@ func NewAuthService(users UserStore, sessions SessionStore, cfg config.Config, l
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &AuthService{users: users, sessions: sessions, cfg: cfg, logger: logger, metrics: metrics}, nil
+	return &AuthService{users: users, sessions: sessions, cfg: cfg, logger: logger, metrics: metrics, bl: blacklist}, nil
 }
 
 func (s *AuthService) Register(ctx context.Context, email, username, password string) (int64, error) {
@@ -159,7 +166,7 @@ func (s *AuthService) Login(ctx context.Context, login, password, ip, userAgent 
 }
 
 func (s *AuthService) Refresh(ctx context.Context, refreshToken, ip, userAgent string) (*TokenPair, error) {
-	claims, err := s.parseToken(refreshToken, TokenTypeRefresh)
+	claims, err := s.parseToken(ctx, refreshToken, TokenTypeRefresh)
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.IncAuthEvent("refresh_fail")
@@ -291,7 +298,7 @@ func (s *AuthService) newToken(userID int64, typ string, ttl time.Duration) (str
 	return tok.SignedString([]byte(s.cfg.JWT.Secret))
 }
 
-func (s *AuthService) parseToken(tokenString, expectedType string) (*TokenClaims, error) {
+func (s *AuthService) parseToken(ctx context.Context, tokenString, expectedType string) (*TokenClaims, error) {
 	parser := jwt.NewParser(jwt.WithLeeway(s.cfg.JWT.ClockSkew))
 	claims := &TokenClaims{}
 
@@ -310,11 +317,33 @@ func (s *AuthService) parseToken(tokenString, expectedType string) (*TokenClaims
 	if claims.Issuer != s.cfg.JWT.Issuer {
 		return nil, ErrInvalidToken
 	}
+	if expectedType == TokenTypeAccess && s.cfg.JWT.Blacklist.Enabled && s.bl != nil && claims.ID != "" {
+		revoked, err := s.bl.IsRevoked(ctx, claims.ID)
+		if err != nil {
+			if s.cfg.JWT.Blacklist.FailOpen {
+				if s.logger != nil {
+					s.logger.Warn("jwt blacklist check failed, fail-open enabled", "err", err)
+				}
+				if s.metrics != nil {
+					s.metrics.IncJWTBlacklistRedisError()
+				}
+			} else {
+				return nil, ErrInvalidToken
+			}
+		}
+		if revoked {
+			return nil, ErrInvalidToken
+		}
+	}
 	return claims, nil
 }
 
 func (s *AuthService) ParseAccessToken(tokenString string) (int64, error) {
-	claims, err := s.parseToken(tokenString, TokenTypeAccess)
+	return s.ParseAccessTokenCtx(context.Background(), tokenString)
+}
+
+func (s *AuthService) ParseAccessTokenCtx(ctx context.Context, tokenString string) (int64, error) {
+	claims, err := s.parseToken(ctx, tokenString, TokenTypeAccess)
 	if err != nil {
 		return 0, ErrInvalidToken
 	}
@@ -326,7 +355,7 @@ func (s *AuthService) ParseAccessToken(tokenString string) (int64, error) {
 }
 
 func (s *AuthService) ParseRefreshTokenUserID(tokenString string) (int64, error) {
-	claims, err := s.parseToken(tokenString, TokenTypeRefresh)
+	claims, err := s.parseToken(context.Background(), tokenString, TokenTypeRefresh)
 	if err != nil {
 		return 0, ErrInvalidToken
 	}

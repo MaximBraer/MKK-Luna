@@ -3,17 +3,23 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 type Metrics struct {
-	Registry          *prometheus.Registry
-	HTTPRequests      *prometheus.CounterVec
-	HTTPDuration      *prometheus.HistogramVec
-	HTTPInFlight      prometheus.Gauge
-	HTTPErrors        *prometheus.CounterVec
-	RedisDegraded     *prometheus.CounterVec
-	AuthEvents        *prometheus.CounterVec
-	AuthEventReasons  *prometheus.CounterVec
-	EmailSendErrors   prometheus.Counter
-	EmailCircuitOpen  prometheus.Counter
-	EmailCircuitState prometheus.Gauge
+	Registry                *prometheus.Registry
+	HTTPRequests            *prometheus.CounterVec
+	HTTPDuration            *prometheus.HistogramVec
+	HTTPInFlight            prometheus.Gauge
+	HTTPErrors              *prometheus.CounterVec
+	RedisDegraded           *prometheus.CounterVec
+	AuthEvents              *prometheus.CounterVec
+	AuthEventReasons        *prometheus.CounterVec
+	EmailSendErrors         prometheus.Counter
+	EmailCircuitOpen        prometheus.Counter
+	EmailCircuitState       prometheus.Gauge
+	IdempotencyBypass       *prometheus.CounterVec
+	IdempotencyHits         prometheus.Counter
+	IdempotencyConflict     prometheus.Counter
+	JWTBlacklistRedisErrors prometheus.Counter
+	LoginLockouts           prometheus.Counter
+	LockReleaseErrors       prometheus.Counter
 }
 
 func New() *Metrics {
@@ -88,6 +94,43 @@ func New() *Metrics {
 				Help: "Email circuit breaker state: 0=closed,1=half_open,2=open.",
 			},
 		),
+		IdempotencyBypass: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "idempotency_bypass_total",
+				Help: "Total idempotency bypass events.",
+			},
+			[]string{"reason"},
+		),
+		IdempotencyHits: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "idempotency_hits_total",
+				Help: "Total idempotency cache hits.",
+			},
+		),
+		IdempotencyConflict: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "idempotency_conflicts_total",
+				Help: "Total idempotency key/hash conflicts.",
+			},
+		),
+		JWTBlacklistRedisErrors: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "jwt_blacklist_redis_errors_total",
+				Help: "Total Redis errors while checking JWT blacklist.",
+			},
+		),
+		LoginLockouts: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "login_lockouts_total",
+				Help: "Total login lockout activations.",
+			},
+		),
+		LockReleaseErrors: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "lock_release_errors_total",
+				Help: "Total distributed lock release errors.",
+			},
+		),
 	}
 
 	reg.MustRegister(
@@ -101,6 +144,12 @@ func New() *Metrics {
 		m.EmailSendErrors,
 		m.EmailCircuitOpen,
 		m.EmailCircuitState,
+		m.IdempotencyBypass,
+		m.IdempotencyHits,
+		m.IdempotencyConflict,
+		m.JWTBlacklistRedisErrors,
+		m.LoginLockouts,
+		m.LockReleaseErrors,
 	)
 
 	return m
@@ -118,4 +167,18 @@ func (m *Metrics) IncAuthEventReason(event, reason string) {
 		return
 	}
 	m.AuthEventReasons.WithLabelValues(event, reason).Inc()
+}
+
+func (m *Metrics) IncJWTBlacklistRedisError() {
+	if m == nil {
+		return
+	}
+	m.JWTBlacklistRedisErrors.Inc()
+}
+
+func (m *Metrics) IncLockReleaseError() {
+	if m == nil {
+		return
+	}
+	m.LockReleaseErrors.Inc()
 }

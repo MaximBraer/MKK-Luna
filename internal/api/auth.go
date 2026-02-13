@@ -14,6 +14,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"MKK-Luna/internal/domain/ratelimit"
+	authinfra "MKK-Luna/internal/infra/auth"
 	"MKK-Luna/internal/service"
 	"MKK-Luna/pkg/api/response"
 )
@@ -22,6 +23,7 @@ type AuthHandler struct {
 	auth           *service.AuthService
 	loginLimiter   ratelimit.Limiter
 	refreshLimiter ratelimit.Limiter
+	lockout        *authinfra.Lockout
 }
 
 type registerRequest struct {
@@ -49,8 +51,8 @@ type tokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-func NewAuthHandler(auth *service.AuthService, loginLimiter, refreshLimiter ratelimit.Limiter) *AuthHandler {
-	return &AuthHandler{auth: auth, loginLimiter: loginLimiter, refreshLimiter: refreshLimiter}
+func NewAuthHandler(auth *service.AuthService, loginLimiter, refreshLimiter ratelimit.Limiter, lockout *authinfra.Lockout) *AuthHandler {
+	return &AuthHandler{auth: auth, loginLimiter: loginLimiter, refreshLimiter: refreshLimiter, lockout: lockout}
 }
 
 // Register godoc
@@ -115,15 +117,39 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	normalizedLogin := strings.TrimSpace(req.Login)
+	if h.lockout != nil {
+		normalized, err := h.lockout.Normalize(normalizedLogin)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid request")
+			return
+		}
+		if locked, retry, err := h.lockout.IsLocked(ctx, normalized); err == nil && locked {
+			setRetryAfter(w, retry)
+			response.Error(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		normalizedLogin = normalized
+	}
 
-	pair, err := h.auth.Login(ctx, strings.TrimSpace(req.Login), req.Password, ip, r.UserAgent())
+	pair, err := h.auth.Login(ctx, normalizedLogin, req.Password, ip, r.UserAgent())
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidCredentials) && h.lockout != nil {
+			if locked, retry, e := h.lockout.OnFailure(ctx, normalizedLogin); e == nil && locked {
+				setRetryAfter(w, retry)
+				response.Error(w, http.StatusTooManyRequests, "too many requests")
+				return
+			}
+		}
 		if errors.Is(err, service.ErrInvalidCredentials) {
 			response.Error(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 		response.Error(w, http.StatusUnauthorized, "invalid credentials")
 		return
+	}
+	if h.lockout != nil {
+		_ = h.lockout.OnSuccess(ctx, normalizedLogin)
 	}
 
 	response.JSON(w, http.StatusOK, tokenResponse{AccessToken: pair.AccessToken, RefreshToken: pair.RefreshToken})

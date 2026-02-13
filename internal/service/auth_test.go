@@ -106,8 +106,9 @@ func (f *fakeSessions) WithTx(ctx context.Context, fn func(*sqlx.Tx) error) erro
 }
 
 type fakeMetrics struct {
-	events  map[string]int
-	reasons map[string]int
+	events               map[string]int
+	reasons              map[string]int
+	blacklistRedisErrors int
 }
 
 func newFakeMetrics() *fakeMetrics {
@@ -120,6 +121,25 @@ func (m *fakeMetrics) IncAuthEvent(event string) {
 
 func (m *fakeMetrics) IncAuthEventReason(event, reason string) {
 	m.reasons[event+":"+reason]++
+}
+
+func (m *fakeMetrics) IncJWTBlacklistRedisError() {
+	m.blacklistRedisErrors++
+}
+
+type fakeBlacklist struct {
+	isRevoked func(ctx context.Context, jti string) (bool, error)
+}
+
+func (f *fakeBlacklist) IsRevoked(ctx context.Context, jti string) (bool, error) {
+	if f.isRevoked != nil {
+		return f.isRevoked(ctx, jti)
+	}
+	return false, nil
+}
+
+func (f *fakeBlacklist) Revoke(ctx context.Context, jti string, ttl time.Duration) error {
+	return nil
 }
 
 func baseConfig() config.Config {
@@ -160,7 +180,7 @@ func TestValidatePassword(t *testing.T) {
 
 func TestRegisterValidation(t *testing.T) {
 	cfg := baseConfig()
-	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil)
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil, nil)
 
 	tests := []struct {
 		name     string
@@ -192,7 +212,7 @@ func TestLoginInvalidCredentials(t *testing.T) {
 	cfg := baseConfig()
 	users := &fakeUsers{}
 	sessions := newFakeSessions()
-	auth, _ := NewAuthService(users, sessions, cfg, nil, nil)
+	auth, _ := NewAuthService(users, sessions, cfg, nil, nil, nil)
 
 	cases := []struct {
 		name  string
@@ -218,7 +238,7 @@ func TestRegisterLoginRefresh(t *testing.T) {
 	users := &fakeUsers{}
 	sessions := newFakeSessions()
 
-	auth, err := NewAuthService(users, sessions, cfg, nil, nil)
+	auth, err := NewAuthService(users, sessions, cfg, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("auth init: %v", err)
 	}
@@ -243,7 +263,7 @@ func TestRefreshScenarios(t *testing.T) {
 	cfg := baseConfig()
 	users := &fakeUsers{}
 	sessions := newFakeSessions()
-	auth, _ := NewAuthService(users, sessions, cfg, nil, nil)
+	auth, _ := NewAuthService(users, sessions, cfg, nil, nil, nil)
 
 	pair, err := auth.newTokenPair(1)
 	if err != nil {
@@ -296,7 +316,7 @@ func TestRefreshScenarios(t *testing.T) {
 
 func TestParseAccessTokenScenarios(t *testing.T) {
 	cfg := baseConfig()
-	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil)
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil, nil)
 
 	cases := []struct {
 		name     string
@@ -397,7 +417,7 @@ func TestRevokeAllByUser(t *testing.T) {
 
 func TestParseRefreshTokenUserID(t *testing.T) {
 	cfg := baseConfig()
-	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil)
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, nil, nil)
 
 	refresh, err := auth.newToken(42, TokenTypeRefresh, time.Minute)
 	if err != nil {
@@ -424,7 +444,7 @@ func TestLogin_MetricsAndBadPassword(t *testing.T) {
 	cfg := baseConfig()
 	users := &fakeUsers{}
 	metrics := newFakeMetrics()
-	auth, _ := NewAuthService(users, newFakeSessions(), cfg, nil, metrics)
+	auth, _ := NewAuthService(users, newFakeSessions(), cfg, nil, metrics, nil)
 
 	_, _ = auth.Register(context.Background(), "u@test.com", "user1", "Password123")
 
@@ -440,7 +460,7 @@ func TestLogin_MetricsAndBadPassword(t *testing.T) {
 func TestLogin_DBErrorMetrics(t *testing.T) {
 	cfg := baseConfig()
 	metrics := newFakeMetrics()
-	auth, _ := NewAuthService(&errUsers{}, newFakeSessions(), cfg, nil, metrics)
+	auth, _ := NewAuthService(&errUsers{}, newFakeSessions(), cfg, nil, metrics, nil)
 
 	_, err := auth.Login(context.Background(), "u@test.com", "Password123", "", "")
 	if !errors.Is(err, ErrInvalidCredentials) {
@@ -455,7 +475,7 @@ func TestRefresh_InvalidSubjectAndTxError(t *testing.T) {
 	cfg := baseConfig()
 	metrics := newFakeMetrics()
 
-	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, metrics)
+	auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, metrics, nil)
 
 	claims := TokenClaims{
 		Type: TokenTypeRefresh,
@@ -474,7 +494,7 @@ func TestRefresh_InvalidSubjectAndTxError(t *testing.T) {
 	}
 
 	sessions := &errSessions{}
-	auth, _ = NewAuthService(&fakeUsers{}, sessions, cfg, nil, metrics)
+	auth, _ = NewAuthService(&fakeUsers{}, sessions, cfg, nil, metrics, nil)
 	validRefresh, _ := auth.newToken(1, TokenTypeRefresh, time.Minute)
 	if _, err := auth.Refresh(context.Background(), validRefresh, "", ""); err == nil {
 		t.Fatalf("expected error")
@@ -490,7 +510,7 @@ func TestRefreshSuccessMetrics(t *testing.T) {
 	users := &fakeUsers{}
 	sessions := newFakeSessions()
 
-	auth, _ := NewAuthService(users, sessions, cfg, nil, metrics)
+	auth, _ := NewAuthService(users, sessions, cfg, nil, metrics, nil)
 
 	_, _ = auth.Register(context.Background(), "u2@test.com", "user2", "Password123")
 	pair, err := auth.Login(context.Background(), "u2@test.com", "Password123", "1.2.3.4", "ua")
@@ -510,13 +530,58 @@ func TestRefreshSuccessMetrics(t *testing.T) {
 func TestLoginByUsername(t *testing.T) {
 	cfg := baseConfig()
 	users := &fakeUsers{}
-	auth, _ := NewAuthService(users, newFakeSessions(), cfg, nil, newFakeMetrics())
+	auth, _ := NewAuthService(users, newFakeSessions(), cfg, nil, newFakeMetrics(), nil)
 
 	_, _ = auth.Register(context.Background(), "u3@test.com", "user3", "Password123")
 	_, err := auth.Login(context.Background(), "user3", "Password123", "", "")
 	if err != nil {
 		t.Fatalf("login by username err=%v", err)
 	}
+}
+
+func TestParseAccessToken_BlacklistFailOpenAndClosed(t *testing.T) {
+	base := baseConfig()
+	metrics := newFakeMetrics()
+	badRedis := &fakeBlacklist{isRevoked: func(context.Context, string) (bool, error) {
+		return false, errors.New("redis down")
+	}}
+
+	t.Run("fail-open allows request and records metric", func(t *testing.T) {
+		cfg := base
+		cfg.JWT.Blacklist.Enabled = true
+		cfg.JWT.Blacklist.FailOpen = true
+		auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, metrics, badRedis)
+
+		token, err := auth.newToken(7, TokenTypeAccess, time.Minute)
+		if err != nil {
+			t.Fatalf("new token: %v", err)
+		}
+		got, err := auth.ParseAccessToken(token)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got != 7 {
+			t.Fatalf("want user 7, got %d", got)
+		}
+		if metrics.blacklistRedisErrors == 0 {
+			t.Fatalf("expected blacklist redis error metric increment")
+		}
+	})
+
+	t.Run("fail-closed denies request", func(t *testing.T) {
+		cfg := base
+		cfg.JWT.Blacklist.Enabled = true
+		cfg.JWT.Blacklist.FailOpen = false
+		auth, _ := NewAuthService(&fakeUsers{}, newFakeSessions(), cfg, nil, newFakeMetrics(), badRedis)
+
+		token, err := auth.newToken(7, TokenTypeAccess, time.Minute)
+		if err != nil {
+			t.Fatalf("new token: %v", err)
+		}
+		if _, err := auth.ParseAccessToken(token); err != ErrInvalidToken {
+			t.Fatalf("expected ErrInvalidToken, got %v", err)
+		}
+	})
 }
 
 type errUsers struct{}
