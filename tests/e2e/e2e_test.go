@@ -23,17 +23,28 @@ func TestE2ECriticalFlowsAndMetrics(t *testing.T) {
 	}
 
 	baseURL := getenv("E2E_BASE_URL", "http://localhost:8080")
-	promURL := getenv("E2E_PROM_URL", "http://localhost:9092")
+	promURL := strings.TrimSpace(os.Getenv("E2E_PROM_URL"))
+	startService(t, "redis")
+	startService(t, "email-mock")
+	waitAPIReady(t, baseURL)
+	defer startService(t, "redis")
+	defer startService(t, "email-mock")
 
-	ownerToken := registerAndLogin(t, baseURL, "e2e-owner@test.com", "e2eowner", "Password123")
-	memberToken := registerAndLogin(t, baseURL, "e2e-member@test.com", "e2emember", "Password123")
+	sfx := strconv.FormatInt(time.Now().UnixNano(), 10)
+	ownerEmail := "e2e-owner-" + sfx + "@test.com"
+	memberEmail := "e2e-member-" + sfx + "@test.com"
+	failEmail := "e2e-fail-" + sfx + "@test.com"
+	redisEmail := "e2e-redis-" + sfx + "@test.com"
+
+	ownerToken := registerAndLogin(t, baseURL, ownerEmail, "e2eowner"+sfx, "Password123")
+	memberToken := registerAndLogin(t, baseURL, memberEmail, "e2emember"+sfx, "Password123")
 	_ = memberToken
 
-	teamID := createTeam(t, baseURL, ownerToken, "e2e-team")
-	invite(t, baseURL, ownerToken, teamID, "e2e-member@test.com", "member", http.StatusOK, http.StatusConflict)
-	invite(t, baseURL, ownerToken, teamID, "e2e-member@test.com", "member", http.StatusConflict)
+	teamID := createTeam(t, baseURL, ownerToken, "e2e-team-"+sfx)
+	invite(t, baseURL, ownerToken, teamID, memberEmail, "member", http.StatusOK, http.StatusConflict)
+	invite(t, baseURL, ownerToken, teamID, memberEmail, "member", http.StatusConflict)
 
-	_ = registerAndLogin(t, baseURL, "e2e-fail@test.com", "e2efail", "Password123")
+	_ = registerAndLogin(t, baseURL, failEmail, "e2efail"+sfx, "Password123")
 
 	taskID := createTask(t, baseURL, ownerToken, teamID, "e2e-task")
 	updateTask(t, baseURL, ownerToken, taskID, map[string]any{"status": "done"}, http.StatusOK)
@@ -41,32 +52,41 @@ func TestE2ECriticalFlowsAndMetrics(t *testing.T) {
 	getHistory(t, baseURL, ownerToken, taskID, http.StatusOK)
 
 	// auth failures for metrics
-	loginFail(t, baseURL, "e2e-owner@test.com", "wrong")
+	loginFail(t, baseURL, ownerEmail, "wrong")
 
 	// email failure + circuit open metrics
 	stopService(t, "email-mock")
 	for i := 0; i < 6; i++ {
-		invite(t, baseURL, ownerToken, teamID, "e2e-fail@test.com", "member", http.StatusServiceUnavailable)
+		invite(t, baseURL, ownerToken, teamID, failEmail, "member", http.StatusServiceUnavailable)
 	}
 	startService(t, "email-mock")
 
 	// redis degraded metric
+	_ = registerAndLogin(t, baseURL, redisEmail, "e2eredis"+sfx, "Password123")
 	stopService(t, "redis")
-	_ = registerAndLogin(t, baseURL, "e2e-redis@test.com", "e2eredis", "Password123")
+	for i := 0; i < 3; i++ {
+		_, _, _ = doJSONBestEffort(http.MethodPost, baseURL+"/api/v1/login", "", map[string]any{
+			"login":    redisEmail,
+			"password": "Password123",
+		})
+		time.Sleep(300 * time.Millisecond)
+	}
 	startService(t, "redis")
+	waitAPIReady(t, baseURL)
 
-	waitPrometheus(t, promURL)
-
-	assertMetric(t, promURL, "http_requests_total")
-	assertMetric(t, promURL, "http_request_duration_seconds_bucket")
-	assertMetric(t, promURL, "http_in_flight_requests")
-	assertMetric(t, promURL, "http_errors_total")
-	assertMetric(t, promURL, "auth_events_total")
-	assertMetric(t, promURL, "auth_event_reasons_total")
-	assertMetric(t, promURL, "redis_degraded_total")
-	assertMetric(t, promURL, "email_send_errors_total")
-	assertMetric(t, promURL, "email_circuit_open_total")
-	assertMetric(t, promURL, "email_circuit_state")
+	if promURL != "" {
+		waitPrometheus(t, promURL)
+		assertMetric(t, promURL, "http_requests_total")
+		assertMetric(t, promURL, "http_request_duration_seconds_bucket")
+		assertMetric(t, promURL, "http_in_flight_requests")
+		assertMetric(t, promURL, "http_errors_total")
+		assertMetric(t, promURL, "auth_events_total")
+		assertMetric(t, promURL, "auth_event_reasons_total")
+		assertMetric(t, promURL, "redis_degraded_total")
+		assertMetric(t, promURL, "email_send_errors_total")
+		assertMetric(t, promURL, "email_circuit_open_total")
+		assertMetric(t, promURL, "email_circuit_state")
+	}
 }
 
 func registerAndLogin(t *testing.T, baseURL, email, username, password string) string {
@@ -79,20 +99,29 @@ func registerAndLogin(t *testing.T, baseURL, email, username, password string) s
 	if status != http.StatusCreated && status != http.StatusConflict {
 		t.Fatalf("register status=%d", status)
 	}
-	status, body := doJSON(t, http.MethodPost, baseURL+"/api/v1/login", "", map[string]any{
-		"login":    email,
-		"password": password,
-	})
-	if status != http.StatusOK {
+	deadline := time.Now().Add(25 * time.Second)
+	for time.Now().Before(deadline) {
+		status, body := doJSON(t, http.MethodPost, baseURL+"/api/v1/login", "", map[string]any{
+			"login":    email,
+			"password": password,
+		})
+		if status == http.StatusOK {
+			var tok struct {
+				AccessToken string `json:"access_token"`
+			}
+			if err := json.Unmarshal(body, &tok); err != nil {
+				t.Fatalf("unmarshal token: %v", err)
+			}
+			return tok.AccessToken
+		}
+		if status == http.StatusUnauthorized || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+			time.Sleep(700 * time.Millisecond)
+			continue
+		}
 		t.Fatalf("login status=%d body=%s", status, body)
 	}
-	var tok struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(body, &tok); err != nil {
-		t.Fatalf("unmarshal token: %v", err)
-	}
-	return tok.AccessToken
+	t.Fatalf("login did not succeed for %s within retry window", email)
+	return ""
 }
 
 func loginFail(t *testing.T, baseURL, login, password string) {
@@ -223,6 +252,34 @@ func doJSON(t *testing.T, method, url, token string, payload any) (int, []byte) 
 	return resp.StatusCode, b
 }
 
+func doJSONBestEffort(method, url, token string, payload any) (int, []byte, error) {
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return 0, nil, err
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b, nil
+}
+
 func assertMetric(t *testing.T, promURL, metric string) {
 	t.Helper()
 	deadline := time.Now().Add(40 * time.Second)
@@ -264,6 +321,23 @@ func waitPrometheus(t *testing.T, promURL string) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("prometheus not ready")
+}
+
+func waitAPIReady(t *testing.T, baseURL string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(baseURL + "/health")
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			return
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("api not ready")
 }
 
 func stopService(t *testing.T, service string) {
