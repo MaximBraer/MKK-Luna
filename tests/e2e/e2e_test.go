@@ -36,7 +36,7 @@ func TestE2ECriticalFlowsAndMetrics(t *testing.T) {
 	_ = registerAndLogin(t, baseURL, "e2e-fail@test.com", "e2efail", "Password123")
 
 	taskID := createTask(t, baseURL, ownerToken, teamID, "e2e-task")
-	patchTask(t, baseURL, ownerToken, taskID, map[string]any{"status": "done"}, http.StatusOK)
+	updateTask(t, baseURL, ownerToken, taskID, map[string]any{"status": "done"}, http.StatusOK)
 	createComment(t, baseURL, ownerToken, taskID, "hello", http.StatusCreated)
 	getHistory(t, baseURL, ownerToken, taskID, http.StatusOK)
 
@@ -149,11 +149,11 @@ func createTask(t *testing.T, baseURL, token string, teamID int64, title string)
 	return resp.ID
 }
 
-func patchTask(t *testing.T, baseURL, token string, taskID int64, payload map[string]any, want int) {
+func updateTask(t *testing.T, baseURL, token string, taskID int64, payload map[string]any, want int) {
 	t.Helper()
-	status, _ := doJSON(t, http.MethodPatch, baseURL+"/api/v1/tasks/"+itoa(taskID), token, payload)
+	status, _ := doJSON(t, http.MethodPut, baseURL+"/api/v1/tasks/"+itoa(taskID), token, payload)
 	if status != want {
-		t.Fatalf("patch task status=%d want=%d", status, want)
+		t.Fatalf("update task status=%d want=%d", status, want)
 	}
 }
 

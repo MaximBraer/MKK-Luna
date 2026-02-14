@@ -82,7 +82,7 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	}
 
 	// 403: member patch forbidden field
-	status, _ = doJSONRequest(t, http.MethodPatch, srv.URL+"/api/v1/tasks/"+itoa(taskID), memberToken, map[string]any{"title": "hack"})
+	status, _ = doJSONRequest(t, http.MethodPut, srv.URL+"/api/v1/tasks/"+itoa(taskID), memberToken, map[string]any{"title": "hack"})
 	if status != http.StatusForbidden {
 		t.Fatalf("expected 403 member patch forbidden field, got %d", status)
 	}
@@ -101,7 +101,7 @@ func TestAPIErrorBranches_400_403_404_409(t *testing.T) {
 	}
 
 	// create one history entry
-	status, _ = doJSONRequest(t, http.MethodPatch, srv.URL+"/api/v1/tasks/"+itoa(taskID), ownerToken, map[string]any{"status": "done"})
+	status, _ = doJSONRequest(t, http.MethodPut, srv.URL+"/api/v1/tasks/"+itoa(taskID), ownerToken, map[string]any{"status": "done"})
 	if status != http.StatusOK {
 		t.Fatalf("expected 200 on patch for history, got %d", status)
 	}

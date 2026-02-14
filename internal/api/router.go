@@ -89,7 +89,7 @@ func New(
 			r.Get("/tasks", taskHandler.List)
 			r.Get("/tasks/{id}", taskHandler.Get)
 			r.Get("/tasks/{id}/history", taskHandler.History)
-			r.Patch("/tasks/{id}", taskHandler.Update)
+			r.Put("/tasks/{id}", taskHandler.Update)
 			r.Delete("/tasks/{id}", taskHandler.Delete)
 
 			r.Post("/tasks/{id}/comments", commentHandler.Create)

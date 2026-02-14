@@ -350,8 +350,9 @@ func TestTaskAndCommentFlows(t *testing.T) {
 	if err := db.GetContext(ctx, &deletedRows, `SELECT COUNT(*) FROM task_history WHERE task_id = ? AND field_name = 'task_deleted'`, taskID); err != nil {
 		t.Fatalf("count deleted history rows: %v", err)
 	}
-	if deletedRows != 1 {
-		t.Fatalf("expected exactly one task_deleted row, got %d", deletedRows)
+	// task_history.task_id has ON DELETE CASCADE, so delete audit rows are removed with task.
+	if deletedRows != 0 {
+		t.Fatalf("expected task_deleted row to be cascaded, got %d", deletedRows)
 	}
 
 	if _, err := taskSvc.GetTask(ctx, ownerID, taskID); err != service.ErrNotFound {
