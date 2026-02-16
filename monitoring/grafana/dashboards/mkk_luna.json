@@ -1,0 +1,85 @@
+{
+  "title": "MKK-Luna",
+  "tags": ["mkk-luna"],
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-15m", "to": "now"},
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "HTTP Requests (by code)",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum by (code) (rate(http_requests_total[5m]))", "legendFormat": "{{code}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP 5xx Errors",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "sum(rate(http_errors_total[5m]))", "legendFormat": "errors"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency p50/p95/p99",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "In-flight Requests",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {"expr": "http_in_flight_requests", "legendFormat": "inflight"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auth Events",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {"expr": "sum by (event) (rate(auth_events_total[5m]))", "legendFormat": "{{event}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis Degraded",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {"expr": "sum by (component) (rate(redis_degraded_total[5m]))", "legendFormat": "{{component}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Email Errors",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [
+        {"expr": "rate(email_send_errors_total[5m])", "legendFormat": "errors"},
+        {"expr": "rate(email_circuit_open_total[5m])", "legendFormat": "cb_open"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Email Circuit State",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [
+        {"expr": "email_circuit_state", "legendFormat": "state"}
+      ]
+    }
+  ]
+}

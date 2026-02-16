@@ -1,0 +1,63 @@
+http:
+  addr: ":8080"
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 60s
+  shutdown_timeout: 10s
+mysql:
+  host: "mysql"
+  port: 3306
+  db: "mkk_luna"
+  user: "root"
+  pass: "root"
+  max_open: 10
+  max_idle: 5
+  max_lifetime: 1h
+redis:
+  addr: "redis:6379"
+  pass: ""
+  db: 0
+jwt:
+  access_ttl: 15m
+  refresh_ttl: 720h
+  secret: "change-me-please-change-me-please-32"
+  issuer: "task-service"
+  clock_skew: 60s
+  blacklist:
+    enabled: true
+    fail_open: true
+auth:
+  bcrypt_cost: 12
+  login_per_min: 5
+  refresh_per_min: 20
+  lockout:
+    max_attempts: 10
+    lock_ttl: 10m
+    key_max_len: 128
+cache:
+  enabled: true
+  task_ttl: 5m
+  stats_ttl: 30s
+idempotency:
+  enabled: true
+  lock_ttl: 30s
+  response_ttl: 10m
+ratelimit:
+  enabled: true
+  window_seconds: 60
+  user_per_min: 100
+metrics:
+  enabled: true
+  addr: ":9090"
+email:
+  base_url: "http://email-mock:8081"
+  timeout: 2s
+circuit_breaker:
+  max_requests: 3
+  interval: 60s
+  timeout: 30s
+  failure_threshold: 5
+admin:
+  user_ids: []
+log:
+  level: "info"
